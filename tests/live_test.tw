@@ -1,0 +1,103 @@
+mode systems
+
+import "harness.tw" as t
+import "../src/live.tw" as live
+import "../src/scale.tw" as sc
+import "../twill_modules/twill/src/term/caps.tw" as cp
+
+fn tty_caps() -> cp.Caps = cp.Caps {
+  level: cp.LEVEL_TRUECOLOR, tty: true, width: 80, height: 24,
+  hyperlinks: false, unicode: true, animate: true,
+}
+
+fn pipe_caps() -> cp.Caps = cp.Caps {
+  level: cp.LEVEL_PLAIN, tty: false, width: 80, height: 24,
+  hyperlinks: false, unicode: false, animate: false,
+}
+
+fn feed(l: live.Live, n: I64) {
+  let i: I64 = 0
+  while i < n {
+    # A decaying loss with a wobble, which is the shape that makes a naive
+    # autoscaler oscillate.
+    let v = 4.0 / (1.0 + f64(i) * 0.05) + f64(i % 7) * 0.01
+    live.push(l, v, f64_ms(i))
+    i = i + 1
+  }
+}
+
+fn f64_ms(i: I64) -> I64 = i * 40
+
+fn the_history_never_grows_past_its_capacity() {
+  let l = live.new(tty_caps(), "loss", 60, 8)
+  feed(l, 20000)
+  t.check("the point buffer stayed bounded", len(l.ys) <= live.capacity(l))
+  t.check("the bucket width grew instead", l.bucket_width > 1)
+}
+
+fn every_step_is_still_counted_after_compaction() {
+  let l = live.new(tty_caps(), "loss", 60, 8)
+  feed(l, 5000)
+  t.equal_i64("the step count is exact", l.steps, 5000)
+}
+
+fn compaction_keeps_the_beginning_of_the_run_on_screen() {
+  # A ring buffer would show the last N steps and hide the drop at the start,
+  # which is the part of a loss curve people actually look at.
+  let l = live.new(tty_caps(), "loss", 60, 8)
+  feed(l, 5000)
+  t.check("the first drawn point is near step zero", l.xs[0] < f64(200))
+}
+
+fn a_nan_is_kept_as_its_own_point_and_not_averaged_away() {
+  let l = live.new(tty_caps(), "loss", 60, 8)
+  feed(l, 100)
+  live.push(l, nan(), 4000)
+  let found = false
+  let i: I64 = 0
+  while i < len(l.ys) {
+    if l.ys[i] != l.ys[i] { found = true }
+    i = i + 1
+  }
+  t.check("the diverged step survived into the drawn series", found)
+}
+
+fn the_best_value_is_the_minimum_seen_and_not_the_latest() {
+  let l = live.new(tty_caps(), "loss", 60, 8)
+  live.push(l, 3.0, 0)
+  live.push(l, 1.0, 40)
+  live.push(l, 9.0, 80)
+  t.near("best held the minimum", l.best, 1.0, 1.0e-12)
+  t.near("last held the latest", l.last_value, 9.0, 1.0e-12)
+}
+
+fn without_a_tty_nothing_is_repainted_and_the_log_is_periodic() {
+  let l = live.new(pipe_caps(), "loss", 60, 8)
+  let emitted: I64 = 0
+  let i: I64 = 0
+  while i < live.LOG_EVERY * 3 {
+    let s = live.push(l, 1.0, i * 40)
+    if len(s) > 0 { emitted = emitted + 1 }
+    i = i + 1
+  }
+  t.equal_i64("one line per LOG_EVERY steps", emitted, 3)
+}
+
+fn a_repaint_carries_the_settled_axis_and_not_a_fresh_one() {
+  let l = live.new(tty_caps(), "loss", 60, 8)
+  feed(l, 200)
+  let before = l.y.axis.hi
+  live.push(l, 0.01, 100000)
+  t.near("one small point did not rescale the axis", l.y.axis.hi, before, 1.0e-9)
+}
+
+fn nan() -> F64 = 0.0 / 0.0
+
+the_history_never_grows_past_its_capacity()
+every_step_is_still_counted_after_compaction()
+compaction_keeps_the_beginning_of_the_run_on_screen()
+a_nan_is_kept_as_its_own_point_and_not_averaged_away()
+the_best_value_is_the_minimum_seen_and_not_the_latest()
+without_a_tty_nothing_is_repainted_and_the_log_is_periodic()
+a_repaint_carries_the_settled_axis_and_not_a_fresh_one()
+t.report("live")

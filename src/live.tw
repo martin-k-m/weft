@@ -1,0 +1,222 @@
+# live.tw - a loss curve that updates while the model trains.
+#
+# This is the case weft exists for. Everything else in the library is a chart
+# someone asked for once; this one is on screen for six hours.
+#
+# Four decisions make the difference between a live plot and a flickering mess,
+# and all four are here rather than spread across the callers:
+#
+#   1. The axis does not jitter. `scale.settle` grows on demand and shrinks only
+#      after the data has stayed comfortably inside the range for a while. A
+#      plot whose y axis rescales every third step cannot be read at all, even
+#      though every frame of it is individually correct.
+#   2. The repaint is in place and byte-identical frames are not sent. That is
+#      twill's `frame.tw` doing the work, and its rule that identical bytes are
+#      never rewritten is what stops the curve strobing on terminals with no
+#      double buffering.
+#   3. The point history is bounded. A hundred-thousand-step run cannot keep
+#      every point and cannot draw them either, so points are folded into
+#      buckets as they arrive and the plot has a fixed cost per update.
+#   4. Without a tty there is no animation at all. It prints one line every
+#      `LOG_EVERY` steps, following the progress bar's rule: a CI job that is
+#      silent for six minutes is indistinguishable from a hung one, and a job
+#      that prints a repaint escape per step produces a log nobody can open.
+
+mode systems
+
+import "../twill_modules/twill/src/term/caps.tw" as cp
+import "../twill_modules/twill/src/term/frame.tw" as fr
+import "../twill_modules/twill/src/term/ansi.tw" as ansi
+import "canvas.tw" as cv
+import "scale.tw" as sc
+import "chart.tw" as ch
+import "theme.tw" as th
+import "fmtnum.tw" as f
+
+let LOG_EVERY: I64 = 50
+
+struct Live {
+  frame: fr.Frame,
+  caps: cp.Caps,
+  title: Str,
+  cols: I64,
+  rows: I64,
+  log_y: Bool,
+  # Bucketed history. `xs` holds the step at the middle of each bucket and `ys`
+  # the mean of the bucket, so the drawn curve is a downsample and not a window:
+  # the beginning of training stays on screen, which is where the interesting
+  # part of a loss curve usually is.
+  xs: Arr[F64],
+  ys: Arr[F64],
+  bucket_sum: F64,
+  bucket_n: I64,
+  bucket_width: I64,
+  steps: I64,
+  y: sc.Live,
+  last_value: F64,
+  best: F64,
+}
+
+# `capacity` is how many drawn points the plot keeps. Twice the plot width, so
+# there are two samples per column and a spike between two columns is still
+# visible, and no more, because a third would be drawn on top of the other two.
+fn new(caps: cp.Caps, title: Str, cols: I64, rows: I64) -> Live = Live {
+  frame: fr.new(caps),
+  caps: caps,
+  title: title,
+  cols: cols,
+  rows: rows,
+  log_y: false,
+  xs: [],
+  ys: [],
+  bucket_sum: 0.0,
+  bucket_n: 0,
+  bucket_width: 1,
+  steps: 0,
+  y: sc.live_new(ch.tick_target_rows(rows)),
+  last_value: 0.0,
+  best: 0.0,
+}
+
+fn capacity(l: Live) -> I64 = l.cols * 2
+
+# Record one measurement. Returns what to write, which is the empty string most
+# of the time: the frame's rate limit decides when a repaint is due, so calling
+# this every step costs an add and a compare rather than a screen of output.
+fn push(l: Live, value: F64, now_ms: I64) -> Str {
+  l.steps = l.steps + 1
+  l.last_value = value
+  if l.steps == 1 || value < l.best { l.best = value }
+  if f.is_nan(value) || f.is_inf(value) {
+    # A NaN loss is the single most important event in a training run, so it is
+    # not folded into a bucket mean where it would take the whole bucket with
+    # it. It is stored as its own point, `chart.tw` breaks the line there, and
+    # the reader sees exactly which step it happened on.
+    flush_bucket(l)
+    l.xs.push(f64(l.steps))
+    l.ys.push(value)
+  } else {
+    l.bucket_sum = l.bucket_sum + value
+    l.bucket_n = l.bucket_n + 1
+    if l.bucket_n >= l.bucket_width { flush_bucket(l) }
+  }
+  if !l.caps.tty {
+    return log_line(l)
+  }
+  if !l.frame.caps.animate || !fr.due(l.frame, now_ms) { return "" }
+  fr.paint(l.frame, body(l), now_ms)
+}
+
+fn flush_bucket(l: Live) {
+  if l.bucket_n == 0 { return }
+  l.xs.push(f64(l.steps) - f64(l.bucket_n) / 2.0)
+  l.ys.push(l.bucket_sum / f64(l.bucket_n))
+  l.bucket_sum = 0.0
+  l.bucket_n = 0
+  if len(l.ys) > capacity(l) { compact(l) }
+}
+
+# Halving. When the history fills, adjacent pairs are averaged and the bucket
+# width doubles, so the plot covers the whole run at every scale with no
+# reallocation and no decision about what to discard. The cost is that early
+# points are smoother than late ones, which is the correct bias: nobody is
+# reading step 40 of a 90,000-step run at single-step resolution.
+fn compact(l: Live) {
+  let xs: Arr[F64] = []
+  let ys: Arr[F64] = []
+  let i: I64 = 0
+  while i + 1 < len(l.ys) {
+    # A NaN survives compaction as itself rather than being averaged away.
+    let a = l.ys[i]
+    let b = l.ys[i + 1]
+    let merged = if f.is_nan(a) || f.is_nan(b) { nan_of(a, b) } else { (a + b) / 2.0 }
+    xs.push((l.xs[i] + l.xs[i + 1]) / 2.0)
+    ys.push(merged)
+    i = i + 2
+  }
+  if i < len(l.ys) {
+    xs.push(l.xs[i])
+    ys.push(l.ys[i])
+  }
+  l.xs = xs
+  l.ys = ys
+  l.bucket_width = l.bucket_width * 2
+}
+
+fn nan_of(a: F64, b: F64) -> F64 = if f.is_nan(a) { a } else { b }
+
+fn body(l: Live) -> Str {
+  let ys = drawable(l)
+  let lo = min_of(ys)
+  let hi = max_of(ys)
+  l.y = sc.settle(l.y, lo, hi)
+  let c = ch.chart(l.title, l.cols, l.rows)
+  c.log_y = l.log_y
+  c.x_label = "step"
+  c.series.push(ch.series("loss", l.xs, l.ys, ch.MARK_LINE))
+  # The settled axis is imposed rather than recomputed. If the chart derived it
+  # from the data again, every frame would get a tight axis and the hysteresis
+  # above would have bought nothing.
+  ch.fix_y(c, if l.log_y { sc.log_axis(lo, hi) } else { l.y.axis })
+  ch.render(c, l.caps) + status(l)
+}
+
+fn status(l: Live) -> Str {
+  let parts = ansi.paint(l.caps, th.label_style(), "step ") + f.compact(f64(l.steps)) +
+    ansi.paint(l.caps, th.label_style(), "  loss ") +
+    ansi.paint(l.caps, th.series_style(0), f.compact(l.last_value)) +
+    ansi.paint(l.caps, th.label_style(), "  best ") + f.compact(l.best)
+  ch.line_of(l.caps, parts)
+}
+
+# The values that will actually be drawn, with the non-finite ones removed. The
+# settler must not see a NaN: one would make every comparison false and freeze
+# the axis at whatever it held when the NaN arrived.
+fn drawable(l: Live) -> Arr[F64] {
+  let out: Arr[F64] = []
+  let i: I64 = 0
+  while i < len(l.ys) {
+    let v = l.ys[i]
+    if !f.is_nan(v) && !f.is_inf(v) && (!l.log_y || v > 0.0) { out.push(v) }
+    i = i + 1
+  }
+  out
+}
+
+fn log_line(l: Live) -> Str {
+  if l.steps % LOG_EVERY != 0 { return "" }
+  "step " + str(l.steps) + "  loss " + f.compact(l.last_value) + "  best " + f.compact(l.best) + "\n"
+}
+
+# Finish. `keep` decides whether the last frame stays in the scrollback, and it
+# defaults to yes at every call site in weft: the whole curve is the artefact of
+# the run and erasing it to tidy the terminal throws away the only record.
+fn close(l: Live) -> Str {
+  flush_bucket(l)
+  if !l.caps.tty {
+    return "step " + str(l.steps) + "  loss " + f.compact(l.last_value) + "  best " + f.compact(l.best) + "\n"
+  }
+  fr.paint(l.frame, body(l), 0) + fr.close(l.frame, true)
+}
+
+fn min_of(ys: Arr[F64]) -> F64 {
+  if len(ys) == 0 { return 0.0 }
+  let m = ys[0]
+  let i: I64 = 1
+  while i < len(ys) {
+    m = f.min_f(m, ys[i])
+    i = i + 1
+  }
+  m
+}
+
+fn max_of(ys: Arr[F64]) -> F64 {
+  if len(ys) == 0 { return 1.0 }
+  let m = ys[0]
+  let i: I64 = 1
+  while i < len(ys) {
+    m = f.max_f(m, ys[i])
+    i = i + 1
+  }
+  m
+}

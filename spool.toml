@@ -1,0 +1,11 @@
+name = "weft"
+version = "0.1.0"
+entry = "src/chart.tw"
+
+# twill is a dependency rather than a toolchain assumption because weft imports
+# twill's own `src/term/` modules by path. They are not part of the standard
+# library, so `import "std/..."` cannot reach them and the repository has to be
+# vendored to be importable at all. See the note in README.md and the entry in
+# docs/needs.md.
+[dependencies]
+twill = { version = "^1.2.0", git = "https://github.com/martin-k-m/twill" }

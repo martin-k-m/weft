@@ -1,0 +1,326 @@
+# chart.tw - the shared frame: axes, gutter, legend, and the render loop.
+#
+# Every chart type in weft is this file plus a way of putting dots on a canvas.
+# Line and scatter differ only in whether consecutive samples are joined, which
+# is one branch and not a second renderer, and bars and histograms hand this
+# file a canvas they filled themselves.
+#
+# Two rules from twill's `docs/cli-design.md` are load-bearing here and not
+# stylistic. Every emitted line is truncated to the terminal width, because a
+# line that wraps breaks the repaint arithmetic that `live.tw` depends on. And
+# nothing in this file writes to stdout: every function returns a string, so a
+# whole chart can be rendered into a buffer and compared in a test.
+
+mode systems
+
+import "../twill_modules/twill/src/term/caps.tw" as cp
+import "../twill_modules/twill/src/term/ansi.tw" as ansi
+import "../twill_modules/twill/src/term/width.tw" as w
+import "canvas.tw" as cv
+import "scale.tw" as sc
+import "theme.tw" as th
+import "fmtnum.tw" as f
+
+let MARK_LINE: I64 = 0
+let MARK_DOT: I64 = 1
+
+struct Series {
+  name: Str,
+  xs: Arr[F64],
+  ys: Arr[F64],
+  mark: I64,
+}
+
+fn series(name: Str, xs: Arr[F64], ys: Arr[F64], mark: I64) -> Series =
+  Series { name: name, xs: xs, ys: ys, mark: mark }
+
+# ys against their own index, which is the common case and the one people write
+# by hand when the library does not provide it.
+fn series_y(name: Str, ys: Arr[F64], mark: I64) -> Series {
+  let xs: Arr[F64] = []
+  let i: I64 = 0
+  while i < len(ys) {
+    xs.push(f64(i))
+    i = i + 1
+  }
+  Series { name: name, xs: xs, ys: ys, mark: mark }
+}
+
+struct Chart {
+  title: Str,
+  x_label: Str,
+  y_label: Str,
+  cols: I64,      # total width in cells, including the gutter
+  rows: I64,      # plot height in cells, excluding the axis and label rows
+  log_y: Bool,
+  series: Arr[Series],
+  # A y axis imposed from outside. The live plot computes its bounds with
+  # hysteresis across frames, which is knowledge this file does not have and
+  # must not second-guess, so it hands the finished axis over instead.
+  y_fixed: Bool,
+  y_axis: sc.Axis,
+}
+
+fn chart(title: Str, cols: I64, rows: I64) -> Chart = Chart {
+  title: title,
+  x_label: "",
+  y_label: "",
+  cols: cols,
+  rows: rows,
+  log_y: false,
+  series: [],
+  y_fixed: false,
+  y_axis: sc.axis(0.0, 1.0, 2),
+}
+
+fn fix_y(c: Chart, a: sc.Axis) {
+  c.y_fixed = true
+  c.y_axis = a
+}
+
+struct Bounds { x_lo: F64, x_hi: F64, y_lo: F64, y_hi: F64, any: Bool }
+
+fn bounds_of(ss: Arr[Series]) -> Bounds {
+  let b = Bounds { x_lo: 0.0, x_hi: 0.0, y_lo: 0.0, y_hi: 0.0, any: false }
+  let i: I64 = 0
+  while i < len(ss) {
+    let s = ss[i]
+    let j: I64 = 0
+    while j < len(s.ys) {
+      let x = s.xs[j]
+      let y = s.ys[j]
+      # A NaN is dropped rather than propagated into the bounds. One NaN in a
+      # loss series would otherwise make every bound NaN and blank the plot,
+      # which hides the ten thousand points that are fine and the position of
+      # the one that is not.
+      if !f.is_nan(x) && !f.is_nan(y) && !f.is_inf(y) {
+        if !b.any {
+          b.x_lo = x
+          b.x_hi = x
+          b.y_lo = y
+          b.y_hi = y
+          b.any = true
+        } else {
+          b.x_lo = f.min_f(b.x_lo, x)
+          b.x_hi = f.max_f(b.x_hi, x)
+          b.y_lo = f.min_f(b.y_lo, y)
+          b.y_hi = f.max_f(b.y_hi, y)
+        }
+      }
+      j = j + 1
+    }
+    i = i + 1
+  }
+  b
+}
+
+# ── Layout ──────────────────────────────────────────────────────────────────
+
+struct Layout {
+  y_axis: sc.Axis,
+  x_axis: sc.Axis,
+  gutter: I64,     # cells reserved for y tick labels, excluding the rule
+  plot_cols: I64,
+}
+
+# Tick counts are derived from the space available rather than fixed. Six ticks
+# on a twelve-row plot puts a label on every other row and the labels stop being
+# a scale and start being a wall.
+fn tick_target_rows(rows: I64) -> I64 = clamp_i(rows / 3, 2, 8)
+fn tick_target_cols(cols: I64) -> I64 = clamp_i(cols / 12, 2, 8)
+
+fn layout(c: Chart, b: Bounds) -> Layout {
+  let y = if c.y_fixed { c.y_axis }
+    else if c.log_y { sc.log_axis(b.y_lo, b.y_hi) }
+    else { sc.axis(b.y_lo, b.y_hi, tick_target_rows(c.rows)) }
+  let x = sc.axis(b.x_lo, b.x_hi, tick_target_cols(c.cols))
+  let g = gutter_width(y)
+  Layout { y_axis: y, x_axis: x, gutter: g, plot_cols: c.cols - g - 1 }
+}
+
+# The gutter is as wide as the widest label it will hold and no wider. Computing
+# it from the labels rather than from a guess is why a plot of temperatures and
+# a plot of gradient norms both have their axis flush against the data.
+fn gutter_width(a: sc.Axis) -> I64 {
+  let n: I64 = 0
+  let i: I64 = 0
+  while i < len(a.ticks) {
+    n = f.max_i(n, w.display_width(sc.tick_label(a, a.ticks[i])))
+    i = i + 1
+  }
+  n + 1
+}
+
+# ── Rendering ───────────────────────────────────────────────────────────────
+
+fn render(c: Chart, caps: cp.Caps) -> Str {
+  let b = bounds_of(c.series)
+  if !b.any {
+    return line_of(caps, ansi.paint(caps, th.label_style(), "(no data)"))
+  }
+  let lay = layout(c, b)
+  let canvas = draw(c, lay, caps)
+  let out = ""
+  if len(c.title) > 0 {
+    out = out + line_of(caps, ansi.paint(caps, th.title_style(), c.title))
+  }
+  out = out + plot_rows(c, lay, canvas, caps)
+  out = out + x_axis_rows(c, lay, caps)
+  if len(c.series) > 1 {
+    out = out + legend(c, caps)
+  }
+  out
+}
+
+fn draw(c: Chart, lay: Layout, caps: cp.Caps) -> cv.Canvas {
+  let canvas = cv.for_caps(caps, lay.plot_cols, c.rows)
+  let px = sc.projection(lay.x_axis, cv.width_dots(canvas))
+  let py = sc.projection(lay.y_axis, cv.height_dots(canvas))
+  let i: I64 = 0
+  while i < len(c.series) {
+    draw_series(canvas, c.series[i], px, py, i + 1, c.log_y)
+    i = i + 1
+  }
+  canvas
+}
+
+fn draw_series(canvas: cv.Canvas, s: Series, px: sc.Proj, py: sc.Proj, id: I64, log_y: Bool) {
+  let prev_x: I64 = 0 - 1
+  let prev_y: I64 = 0
+  let j: I64 = 0
+  while j < len(s.ys) {
+    let yv = s.ys[j]
+    let usable = !f.is_nan(yv) && !f.is_inf(yv) && (!log_y || yv > 0.0)
+    if usable {
+      let x = sc.to_cell(px, s.xs[j])
+      let y = flip(py, project_y(py, yv, log_y))
+      if s.mark == MARK_LINE && prev_x >= 0 {
+        cv.line(canvas, prev_x, prev_y, x, y, id)
+      } else {
+        cv.plot(canvas, x, y, id)
+      }
+      prev_x = x
+      prev_y = y
+    } else {
+      # A gap in the data breaks the line rather than being bridged. Joining
+      # across a NaN draws a segment that was never measured, and on a loss
+      # curve that segment is exactly where the reader will look.
+      prev_x = 0 - 1
+    }
+    j = j + 1
+  }
+}
+
+fn project_y(py: sc.Proj, v: F64, log_y: Bool) -> I64 {
+  if !log_y { return sc.to_cell(py, v) }
+  # On a log axis the projection is linear in the exponent, so the same Proj is
+  # reused with the logarithms substituted for the values.
+  let lo = log(py.lo)
+  let hi = log(py.lo + py.span)
+  i64((log(v) - lo) / (hi - lo) * f64(py.cells - 1) + 0.5)
+}
+
+# Dot rows count from the top, values increase upward. One flip, here.
+fn flip(py: sc.Proj, cell: I64) -> I64 = py.cells - 1 - cell
+
+fn plot_rows(c: Chart, lay: Layout, canvas: cv.Canvas, caps: cp.Caps) -> Str {
+  let out = ""
+  let row: I64 = 0
+  while row < c.rows {
+    let label = row_label(lay, c.rows, row, canvas)
+    let painted = ansi.paint(caps, th.label_style(), w.pad_left(label, lay.gutter))
+    let rule = ansi.paint(caps, th.axis_style(), th.v_rule(caps))
+    out = out + line_of(caps, painted + rule + cells(canvas, row, caps))
+    row = row + 1
+  }
+  out
+}
+
+# A y tick is labelled on the row its value lands in. Computed by projecting the
+# tick rather than by dividing the rows evenly, because the axis bounds are
+# snapped to the tick step and the two only agree when the projection is the one
+# the data was drawn with.
+fn row_label(lay: Layout, rows: I64, row: I64, canvas: cv.Canvas) -> Str {
+  let py = sc.projection(lay.y_axis, cv.height_dots(canvas))
+  let sub = cv.sub_y_of(canvas.res)
+  let i: I64 = 0
+  while i < len(lay.y_axis.ticks) {
+    let v = lay.y_axis.ticks[i]
+    let dot = flip(py, sc.to_cell(py, v))
+    if dot / sub == row { return sc.tick_label(lay.y_axis, v) }
+    i = i + 1
+  }
+  ""
+}
+
+fn cells(canvas: cv.Canvas, row: I64, caps: cp.Caps) -> Str {
+  let glyphs = cv.row_glyphs(canvas, row)
+  let owners = cv.row_owners(canvas, row)
+  let out = ""
+  let run_owner: I64 = 0 - 1
+  let i: I64 = 0
+  # Runs of one owner share a single escape sequence. On a wide plot this is the
+  # difference between 200 bytes a row and 2000, and at 30 repaints a second on
+  # a remote session that difference is visible as lag.
+  while i < len(glyphs) {
+    let o = owners[i]
+    if o != run_owner {
+      if run_owner > 0 { out = out + ansi.reset(caps) }
+      if o > 0 { out = out + ansi.open(caps, th.series_style(o - 1)) }
+      run_owner = o
+    }
+    out = out + glyphs[i]
+    i = i + 1
+  }
+  if run_owner > 0 { out = out + ansi.reset(caps) }
+  out
+}
+
+fn x_axis_rows(c: Chart, lay: Layout, caps: cp.Caps) -> Str {
+  let rule = th.corner(caps) + w.repeat(th.h_rule(caps), lay.plot_cols)
+  let out = line_of(caps, w.spaces(lay.gutter) + ansi.paint(caps, th.axis_style(), rule))
+  out = out + line_of(caps, w.spaces(lay.gutter + 1) + ansi.paint(caps, th.label_style(), x_tick_row(lay)))
+  if len(c.x_label) > 0 {
+    out = out + line_of(caps, w.spaces(lay.gutter + 1) + ansi.paint(caps, th.label_style(), c.x_label))
+  }
+  out
+}
+
+# X labels are laid down left to right and a label is skipped when it would
+# overlap the one before it. Skipping is better than shrinking the label,
+# because a reader can interpolate a missing tick and cannot recover a digit
+# that was truncated away.
+fn x_tick_row(lay: Layout) -> Str {
+  let px = sc.projection(lay.x_axis, lay.plot_cols)
+  let out = ""
+  let i: I64 = 0
+  while i < len(lay.x_axis.ticks) {
+    let v = lay.x_axis.ticks[i]
+    let label = sc.tick_label(lay.x_axis, v)
+    let at = sc.to_cell(px, v) - w.display_width(label) / 2
+    let start = if at < 0 { 0 } else { at }
+    if start >= len(out) + 1 || len(out) == 0 {
+      out = out + w.spaces(start - w.display_width(out)) + label
+    }
+    i = i + 1
+  }
+  out
+}
+
+fn legend(c: Chart, caps: cp.Caps) -> Str {
+  let out = w.spaces(0)
+  let i: I64 = 0
+  while i < len(c.series) {
+    let swatch = if caps.unicode { "━━" } else { "--" }
+    out = out + ansi.paint(caps, th.series_style(i), swatch) + " " + c.series[i].name
+    if i < len(c.series) - 1 { out = out + "  " }
+    i = i + 1
+  }
+  line_of(caps, out)
+}
+
+# Every line leaves this file truncated and newline-terminated. One function so
+# there is one place the rule is enforced.
+fn line_of(caps: cp.Caps, s: Str) -> Str = w.truncate(s, caps.width) + "\n"
+
+fn clamp_i(v: I64, lo: I64, hi: I64) -> I64 = if v < lo { lo } else if v > hi { hi } else { v }

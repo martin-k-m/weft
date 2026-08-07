@@ -1,0 +1,79 @@
+# sparkline.tw - one line of shape, no axes.
+#
+# A sparkline goes inside a sentence. It has no axes, no title and no key, so
+# every design question is about what to leave out and the answer is almost
+# always "that too".
+#
+# One thing is never left out: the sparkline reports its own range in the text
+# beside it, or the caller does. Eight glyph levels over an unstated range is a
+# picture that can be drawn from any data at all, and a reader who cannot see
+# the range cannot tell a rally from a rounding error.
+
+mode systems
+
+import "../twill_modules/twill/src/term/caps.tw" as cp
+import "../twill_modules/twill/src/term/ansi.tw" as ansi
+import "theme.tw" as th
+import "fmtnum.tw" as f
+
+# Eighth-blocks, low to high. The empty cell is not used: a value at the bottom
+# of the range is still a measurement and drawing it as a blank makes it look
+# like missing data, which is the other thing a sparkline is used to show.
+let LEVELS: Arr[Str] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
+let LEVELS_ASCII: Arr[Str] = ["_", "_", ".", ".", "-", "-", "^", "^"]
+
+fn render(caps: cp.Caps, ys: Arr[F64]) -> Str {
+  if len(ys) == 0 { return "" }
+  let lo = ys[0]
+  let hi = ys[0]
+  let i: I64 = 1
+  while i < len(ys) {
+    lo = f.min_f(lo, ys[i])
+    hi = f.max_f(hi, ys[i])
+    i = i + 1
+  }
+  let span = if hi - lo > 0.0 { hi - lo } else { 1.0 }
+  let out = ""
+  let j: I64 = 0
+  while j < len(ys) {
+    let k = level(ys[j], lo, span)
+    out = out + (if caps.unicode { LEVELS[k] } else { LEVELS_ASCII[k] })
+    j = j + 1
+  }
+  ansi.paint(caps, th.series_style(0), out)
+}
+
+fn level(v: F64, lo: F64, span: F64) -> I64 {
+  let k = i64((v - lo) / span * 7.0 + 0.5)
+  if k < 0 { 0 } else if k > 7 { 7 } else { k }
+}
+
+# The form worth reaching for: the shape with its endpoints spelled out.
+fn labelled(caps: cp.Caps, name: Str, ys: Arr[F64]) -> Str {
+  if len(ys) == 0 { return name + " (no data)" }
+  ansi.paint(caps, th.label_style(), name + " ") + render(caps, ys) +
+    ansi.paint(caps, th.label_style(), " " + f.compact(ys[0]) + " to " + f.compact(ys[len(ys) - 1]))
+}
+
+# Downsample to a width by taking the mean of each run. Taking every nth point
+# instead would alias: a series that oscillates every other step samples to a
+# flat line, and the flat line is a confident statement that nothing happened.
+fn fit(ys: Arr[F64], width: I64) -> Arr[F64] {
+  if len(ys) <= width || width <= 0 { return ys }
+  let out: Arr[F64] = []
+  let i: I64 = 0
+  while i < width {
+    let a = len(ys) * i / width
+    let b = len(ys) * (i + 1) / width
+    let end = if b > a { b } else { a + 1 }
+    let sum = 0.0
+    let j = a
+    while j < end && j < len(ys) {
+      sum = sum + ys[j]
+      j = j + 1
+    }
+    out.push(sum / f64(end - a))
+    i = i + 1
+  }
+  out
+}

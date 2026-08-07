@@ -1,0 +1,95 @@
+# heatmap.tw - a matrix as colour, and as density where colour is not available.
+#
+# A heatmap is the one chart where the colour is the data, so it is also the one
+# chart where the degradation ladder cannot just drop colour and carry on.
+# Below truecolour the value is carried by glyph density instead, which reads
+# correctly in a monochrome terminal and survives being pasted into a bug report.
+#
+# The cell is two characters wide. A terminal cell is about twice as tall as it
+# is wide, so a matrix drawn one cell per element comes out stretched vertically
+# by a factor of two and a symmetric matrix does not look symmetric.
+
+mode systems
+
+import "../twill_modules/twill/src/term/caps.tw" as cp
+import "../twill_modules/twill/src/term/ansi.tw" as ansi
+import "../twill_modules/twill/src/term/width.tw" as w
+import "theme.tw" as th
+import "chart.tw" as ch
+import "fmtnum.tw" as f
+
+struct Matrix {
+  rows: I64,
+  cols: I64,
+  values: Arr[F64],   # row major
+}
+
+fn matrix(rows: I64, cols: I64, values: Arr[F64]) -> Matrix =
+  Matrix { rows: rows, cols: cols, values: values }
+
+fn at(m: Matrix, r: I64, c: I64) -> F64 = m.values[r * m.cols + c]
+
+struct Range { lo: F64, hi: F64 }
+
+fn range_of(m: Matrix) -> Range {
+  let lo = m.values[0]
+  let hi = m.values[0]
+  let i: I64 = 1
+  while i < len(m.values) {
+    lo = f.min_f(lo, m.values[i])
+    hi = f.max_f(hi, m.values[i])
+    i = i + 1
+  }
+  Range { lo: lo, hi: hi }
+}
+
+fn render(title: Str, m: Matrix, caps: cp.Caps) -> Str {
+  let r = range_of(m)
+  let out = ""
+  if len(title) > 0 { out = out + ch.line_of(caps, ansi.paint(caps, th.title_style(), title)) }
+  let row: I64 = 0
+  while row < m.rows {
+    let s = ""
+    let c: I64 = 0
+    while c < m.cols {
+      s = s + cell(caps, at(m, row, c), r)
+      c = c + 1
+    }
+    out = out + ch.line_of(caps, s)
+    row = row + 1
+  }
+  out + scale_bar(caps, r)
+}
+
+fn cell(caps: cp.Caps, v: F64, r: Range) -> Str {
+  let t = normalise(v, r)
+  if th.gradients_ok(caps) {
+    return ansi.paint(caps, ansi.on(ansi.plain_style(), th.ramp_at(t)), "  ")
+  }
+  let g = th.density(caps, t)
+  g + g
+}
+
+# Position in the range, in thousandths, clamped. Thousandths rather than a
+# float because the ramp is interpolated in integer channel space, and mixing
+# the two representations is how a ramp ends up off by one shade at the top.
+fn normalise(v: F64, r: Range) -> I64 {
+  let span = r.hi - r.lo
+  if span <= 0.0 { return 500 }
+  let t = i64((v - r.lo) / span * 1000.0)
+  if t < 0 { 0 } else if t > 1000 { 1000 } else { t }
+}
+
+# A key, always. A heatmap without one is a picture of a matrix rather than a
+# reading of it, and the two ends are the only numbers most readers take away.
+fn scale_bar(caps: cp.Caps, r: Range) -> Str {
+  let bar = ""
+  let i: I64 = 0
+  while i < 20 {
+    bar = bar + cell(caps, r.lo + (r.hi - r.lo) * f64(i) / 19.0, r)
+    i = i + 1
+  }
+  ch.line_of(caps,
+    ansi.paint(caps, th.label_style(), f.compact(r.lo) + " ") + bar +
+    ansi.paint(caps, th.label_style(), " " + f.compact(r.hi)))
+}

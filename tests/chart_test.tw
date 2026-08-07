@@ -1,0 +1,172 @@
+mode systems
+
+import "harness.tw" as t
+import "../src/chart.tw" as ch
+import "../src/scale.tw" as sc
+import "../src/canvas.tw" as cv
+import "../src/bars.tw" as bars
+import "../src/sparkline.tw" as spark
+import "../src/fmtnum.tw" as f
+import "../twill_modules/twill/src/term/caps.tw" as cp
+import "../twill_modules/twill/src/term/width.tw" as w
+
+# Capabilities are constructed rather than detected, because a test that reads
+# the environment tests the machine it runs on. The three tiers below are the
+# three that behave differently.
+fn plain_caps() -> cp.Caps = cp.Caps {
+  level: cp.LEVEL_PLAIN, tty: false, width: 80, height: 24,
+  hyperlinks: false, unicode: false, animate: false,
+}
+
+fn rich_caps() -> cp.Caps = cp.Caps {
+  level: cp.LEVEL_TRUECOLOR, tty: true, width: 80, height: 24,
+  hyperlinks: true, unicode: true, animate: true,
+}
+
+fn sample() -> ch.Chart {
+  let c = ch.chart("loss", 60, 8)
+  let ys: Arr[F64] = []
+  let i: I64 = 0
+  while i < 50 {
+    ys.push(4.0 / (1.0 + f64(i) * 0.2))
+    i = i + 1
+  }
+  c.series.push(ch.series_y("train", ys, ch.MARK_LINE))
+  c
+}
+
+fn a_plain_terminal_gets_no_escape_sequences_at_all() {
+  let out = ch.render(sample(), plain_caps())
+  t.check("nothing was emitted with an escape byte", index_of(out, chr(27)) < 0)
+}
+
+fn no_rendered_line_is_wider_than_the_terminal() {
+  # The rule that makes in-place repainting arithmetic hold. A wrapped line
+  # breaks it permanently, because the frame counts logical lines and the
+  # terminal counts visual ones.
+  let caps = plain_caps()
+  let out = ch.render(sample(), caps)
+  let lines = split_lines(out)
+  let i: I64 = 0
+  let widest: I64 = 0
+  while i < len(lines) {
+    widest = f.max_i(widest, w.display_width(lines[i]))
+    i = i + 1
+  }
+  t.check("every line fits in 80 columns", widest <= caps.width)
+}
+
+fn the_plot_has_the_number_of_rows_it_was_asked_for() {
+  let c = sample()
+  let out = ch.render(c, plain_caps())
+  # Title, the plot rows, the axis rule and the x label row.
+  t.equal_i64("row count is title plus rows plus two", count_lines(out), 1 + c.rows + 2)
+}
+
+fn an_empty_chart_says_so_instead_of_drawing_an_empty_frame() {
+  let c = ch.chart("nothing", 40, 6)
+  let out = ch.render(c, plain_caps())
+  t.check("the empty case is named", index_of(out, "no data") >= 0)
+}
+
+fn a_fixed_axis_is_used_as_given_and_not_recomputed() {
+  let c = sample()
+  let a = sc.axis(0.0, 8.0, 5)
+  ch.fix_y(c, a)
+  let lay = ch.layout(c, ch.bounds_of(c.series))
+  t.near("the imposed low bound survived", lay.y_axis.lo, a.lo, 1.0e-9)
+  t.near("the imposed high bound survived", lay.y_axis.hi, a.hi, 1.0e-9)
+}
+
+fn a_bar_chart_baseline_is_always_zero() {
+  let bs: Arr[bars.Bar] = [bars.bar("a", 100.0), bars.bar("b", 104.0)]
+  let out = bars.horizontal("counts", bs, 60, plain_caps())
+  # If the baseline were the minimum, the first bar would be empty and a four
+  # percent difference would read as everything against nothing.
+  t.check("the smaller bar is not empty", index_of(out, "#") >= 0)
+}
+
+fn a_histogram_bins_every_value_it_is_given() {
+  let xs: Arr[F64] = []
+  let i: I64 = 0
+  while i < 200 {
+    xs.push(f64(i % 20) * 0.5)
+    i = i + 1
+  }
+  let h = bars.histogram(xs, 8)
+  let total: I64 = 0
+  let j: I64 = 0
+  while j < len(h.counts) {
+    total = total + h.counts[j]
+    j = j + 1
+  }
+  t.equal_i64("no value was lost between the bins", total, len(xs))
+}
+
+fn a_histogram_puts_the_maximum_in_the_last_bin_and_not_past_it() {
+  let xs: Arr[F64] = [0.0, 1.0, 2.0, 3.0, 4.0]
+  let h = bars.histogram(xs, 4)
+  t.check("the top bin is occupied", h.counts[len(h.counts) - 1] > 0)
+}
+
+fn a_sparkline_is_one_glyph_per_point() {
+  let ys: Arr[F64] = [1.0, 3.0, 2.0, 5.0]
+  let s = spark.render(plain_caps(), ys)
+  t.equal_i64("four points give four characters", len(s), 4)
+}
+
+fn downsampling_a_sparkline_averages_rather_than_decimates() {
+  # Every other point taken from an alternating series is a flat line, and a
+  # flat line is a confident claim that nothing happened.
+  let ys: Arr[F64] = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]
+  let fitted = spark.fit(ys, 4)
+  t.equal_i64("the fit has the requested width", len(fitted), 4)
+  t.near("each pair averaged to a half", fitted[0], 0.5, 1.0e-9)
+}
+
+fn index_of(hay: Str, needle: Str) -> I64 {
+  let n = len(needle)
+  let i: I64 = 0
+  while i + n <= len(hay) {
+    if slice(hay, i, i + n) == needle { return i }
+    i = i + 1
+  }
+  0 - 1
+}
+
+fn count_lines(s: Str) -> I64 {
+  let n: I64 = 0
+  let i: I64 = 0
+  while i < len(s) {
+    if slice(s, i, i + 1) == "\n" { n = n + 1 }
+    i = i + 1
+  }
+  n
+}
+
+fn split_lines(s: Str) -> Arr[Str] {
+  let out: Arr[Str] = []
+  let start: I64 = 0
+  let i: I64 = 0
+  while i < len(s) {
+    if slice(s, i, i + 1) == "\n" {
+      out.push(slice(s, start, i))
+      start = i + 1
+    }
+    i = i + 1
+  }
+  if start < len(s) { out.push(slice(s, start, len(s))) }
+  out
+}
+
+a_plain_terminal_gets_no_escape_sequences_at_all()
+no_rendered_line_is_wider_than_the_terminal()
+the_plot_has_the_number_of_rows_it_was_asked_for()
+an_empty_chart_says_so_instead_of_drawing_an_empty_frame()
+a_fixed_axis_is_used_as_given_and_not_recomputed()
+a_bar_chart_baseline_is_always_zero()
+a_histogram_bins_every_value_it_is_given()
+a_histogram_puts_the_maximum_in_the_last_bin_and_not_past_it()
+a_sparkline_is_one_glyph_per_point()
+downsampling_a_sparkline_averages_rather_than_decimates()
+t.report("chart")

@@ -1,0 +1,214 @@
+# scale.tw - data range to screen position, and the choice of tick values.
+#
+# Tick placement is the thing that separates a plot from a picture of numbers.
+# Divide the range by the tick count and you get 0.037, 0.074, 0.111, and the
+# reader now has to do arithmetic to answer "roughly what is this". So ticks are
+# chosen from the 1/2/5 family scaled by a power of ten, and the axis bounds are
+# then moved outward to land on them, rather than the ticks being squeezed into
+# bounds the data happened to have.
+#
+# The other half of this file is the part that matters for a live plot: bounds
+# that do not jitter. See `settle`.
+
+mode systems
+
+import "fmtnum.tw" as f
+
+# A finished axis: the bounds actually drawn, the step, and the tick values.
+struct Axis {
+  lo: F64,
+  hi: F64,
+  step: F64,
+  ticks: Arr[F64],
+  decimals: I64,
+}
+
+# A linear map from data to a cell column or row. Kept separate from Axis so a
+# chart can project points against an axis without carrying the tick list into
+# the inner loop.
+struct Proj {
+  lo: F64,
+  span: F64,
+  cells: I64,
+}
+
+fn projection(a: Axis, cells: I64) -> Proj = Proj {
+  lo: a.lo,
+  # A zero span would divide by zero for a constant series. One is as arbitrary
+  # as any other value and puts the flat line in the middle, which is the only
+  # reading of a constant series that is not misleading.
+  span: if a.hi - a.lo > 0.0 { a.hi - a.lo } else { 1.0 },
+  cells: cells,
+}
+
+fn to_cell(p: Proj, v: F64) -> I64 = i64((v - p.lo) / p.span * f64(p.cells - 1) + 0.5)
+
+fn to_cell_f(p: Proj, v: F64) -> F64 = (v - p.lo) / p.span * f64(p.cells - 1)
+
+# ── Nice numbers ────────────────────────────────────────────────────────────
+
+# The 1/2/5 ladder. 2.5 is included because it is the only way to get five ticks
+# out of a decade without either doubling up or leaving a gap, and a reader
+# reads 2.5 as a round number even though the ladder pretends otherwise.
+fn nice_step(raw: F64) -> F64 {
+  if raw <= 0.0 { return 1.0 }
+  let e = f.exponent_of(raw)
+  let mag = f.pow10f(e)
+  let frac = raw / mag
+  let mult = if frac <= 1.0 { 1.0 }
+    else if frac <= 2.0 { 2.0 }
+    else if frac <= 2.5 { 2.5 }
+    else if frac <= 5.0 { 5.0 }
+    else { 10.0 }
+  mult * mag
+}
+
+fn floor_to(v: F64, step: F64) -> F64 = f64(floor_div(v, step)) * step
+fn ceil_to(v: F64, step: F64) -> F64 = f64(ceil_div(v, step)) * step
+
+# Integer floor and ceiling of v/step. Written out because i64() truncates
+# toward zero, which floors positives and ceilings negatives, and an axis that
+# behaves differently above and below zero clips the bottom of a plot that
+# crosses it.
+fn floor_div(v: F64, step: F64) -> I64 {
+  let q = v / step
+  let t = i64(q)
+  if f64(t) > q { t - 1 } else { t }
+}
+
+fn ceil_div(v: F64, step: F64) -> I64 {
+  let q = v / step
+  let t = i64(q)
+  if f64(t) < q { t + 1 } else { t }
+}
+
+# Build an axis covering [lo, hi] with about `target` ticks. `target` is a
+# request, not a promise: rounding the step to the 1/2/5 ladder can land one
+# either side and forcing the count back would undo the rounding that made the
+# labels readable in the first place.
+fn axis(lo: F64, hi: F64, target: I64) -> Axis {
+  let n = if target < 2 { 2 } else { target }
+  let padded = pad_degenerate(lo, hi)
+  let step = nice_step((padded.hi - padded.lo) / f64(n - 1))
+  let a = floor_to(padded.lo, step)
+  let b = ceil_to(padded.hi, step)
+  Axis {
+    lo: a,
+    hi: b,
+    step: step,
+    ticks: tick_values(a, b, step),
+    decimals: f.decimals_for_step(step),
+  }
+}
+
+struct Span { lo: F64, hi: F64 }
+
+# A series of identical values has no range to scale. Give it one proportional
+# to its own magnitude, so a flat line at 1e6 does not get a range of 1 and a
+# flat line at 1e-6 does not get a range of 1 either.
+fn pad_degenerate(lo: F64, hi: F64) -> Span {
+  if hi > lo { return Span { lo: lo, hi: hi } }
+  let mag = f.max_f(f.abs_f(lo), 1.0)
+  Span { lo: lo - mag * 0.05, hi: hi + mag * 0.05 }
+}
+
+fn tick_values(lo: F64, hi: F64, step: F64) -> Arr[F64] {
+  let out: Arr[F64] = []
+  let k = floor_div(lo, step)
+  let v = f64(k) * step
+  # The half-step slack absorbs the accumulated error of repeated addition, so
+  # the top tick is not dropped because it computed to hi minus 1e-15.
+  while v <= hi + step * 0.5 {
+    out.push(v)
+    k = k + 1
+    v = f64(k) * step
+  }
+  out
+}
+
+fn tick_label(a: Axis, v: F64) -> Str = f.fixed(v, a.decimals)
+
+# ── Bounds that hold still ──────────────────────────────────────────────────
+#
+# The live case. Recomputing the axis from the data on every new point makes the
+# whole plot slide under the reader every few frames, and a sliding plot is
+# unreadable even though every individual frame is correct.
+#
+# Three rules, and together they are the difference between a live plot and a
+# flicker:
+#
+#   1. Bounds only ever move to a tick multiple, so they move in visible steps
+#      rather than continuously. A point arriving inside the current top tick
+#      changes nothing at all.
+#   2. Growth is immediate. A point outside the range must be shown now; hiding
+#      real data to keep the frame steady is the one trade never worth making.
+#   3. Shrinking is delayed and hysteretic. The range contracts only when the
+#      data has stayed inside the inner two thirds of it for `SETTLE_FRAMES`
+#      consecutive frames. Loss curves fall fast and then wander, and without
+#      the delay the axis chases every dip back up again.
+
+struct Live {
+  axis: Axis,
+  target_ticks: I64,
+  # Consecutive frames the data has fitted comfortably inside the current axis.
+  calm: I64,
+}
+
+let SETTLE_FRAMES: I64 = 30
+let SHRINK_FRACTION: F64 = 0.66
+
+fn live_new(target_ticks: I64) -> Live = Live {
+  axis: axis(0.0, 1.0, target_ticks),
+  target_ticks: target_ticks,
+  calm: 0,
+}
+
+fn settle(l: Live, lo: F64, hi: F64) -> Live {
+  let a = l.axis
+  let outside = lo < a.lo || hi > a.hi
+  if outside {
+    # Union with the existing range rather than replacing it. Replacing makes
+    # the axis snap tight around a transient spike and then snap back.
+    let na = axis(f.min_f(lo, a.lo), f.max_f(hi, a.hi), l.target_ticks)
+    return Live { axis: na, target_ticks: l.target_ticks, calm: 0 }
+  }
+  let span = a.hi - a.lo
+  let used = (hi - lo) / span
+  if used > SHRINK_FRACTION {
+    return Live { axis: a, target_ticks: l.target_ticks, calm: 0 }
+  }
+  let calm = l.calm + 1
+  if calm < SETTLE_FRAMES {
+    return Live { axis: a, target_ticks: l.target_ticks, calm: calm }
+  }
+  Live { axis: axis(lo, hi, l.target_ticks), target_ticks: l.target_ticks, calm: 0 }
+}
+
+# ── Log scaling ─────────────────────────────────────────────────────────────
+#
+# A loss curve that falls three orders of magnitude is a flat line at zero on a
+# linear axis for nine tenths of the run. Log is offered rather than imposed,
+# because a log axis on data that spans one decade is a needless mystery.
+
+fn log_axis(lo: F64, hi: F64) -> Axis {
+  # Non-positive values have no logarithm. Clamping to the smallest positive
+  # value present would invent a data point, so the caller filters first and
+  # this asserts the contract instead.
+  let a = f.max_f(lo, 1.0e-300)
+  let b = f.max_f(hi, a * 10.0)
+  let e_lo = f.exponent_of(a)
+  let e_hi = f.exponent_of(b) + 1
+  let ticks: Arr[F64] = []
+  let e = e_lo
+  while e <= e_hi {
+    ticks.push(f.pow10f(e))
+    e = e + 1
+  }
+  Axis {
+    lo: f.pow10f(e_lo),
+    hi: f.pow10f(e_hi),
+    step: 0.0,
+    ticks: ticks,
+    decimals: 0,
+  }
+}

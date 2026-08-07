@@ -1,0 +1,155 @@
+# fmtnum.tw - turning an F64 into the shortest string that is still honest.
+#
+# Axis labels are the only place in a plot where a number is written out, so the
+# whole plot's credibility rests on this file. Two rules govern it.
+#
+# A tick label is never rounded to fewer digits than it takes to tell it apart
+# from its neighbours. A y axis reading 1.0, 1.0, 1.0 because the step is 0.04
+# is a plot that has lied about its own resolution.
+#
+# And every label on one axis is written to the same number of decimals, even
+# where a shorter form exists for one of them. Ragged decimals make the column
+# ripple and the eye reads the ripple as data.
+
+mode systems
+
+let NEG: Str = "-"
+
+# Decimal places needed to distinguish values one `step` apart, capped so a
+# pathological step does not produce a forty-character label. The cap is where
+# the axis switches to exponent form instead.
+fn decimals_for_step(step: F64) -> I64 {
+  let s = abs_f(step)
+  if s <= 0.0 { return 0 }
+  let d: I64 = 0
+  let scaled = s
+  while scaled < 1.0 && d < 12 {
+    scaled = scaled * 10.0
+    d = d + 1
+  }
+  # One extra place when the step's leading digit is not 1, because 2.5 and 5.0
+  # steps land on values whose first differing digit is one further right.
+  if scaled >= 2.0 && scaled < 10.0 && d > 0 { d } else { d }
+}
+
+fn fixed(v: F64, places: I64) -> Str {
+  if is_nan(v) { return "NaN" }
+  if is_inf(v) { return if v > 0.0 { "inf" } else { "-inf" } }
+  let neg = v < 0.0
+  let x = if neg { 0.0 - v } else { v }
+  let scale = pow10(places)
+  # Round half away from zero, which is what a reader expects to see on an axis.
+  let units = i64(x * scale + 0.5)
+  let whole = units / int_pow10(places)
+  let frac = units % int_pow10(places)
+  let head = str(whole)
+  let out = if places <= 0 { head } else { head + "." + pad_zeros(frac, places) }
+  if neg && units > 0 { NEG + out } else { out }
+}
+
+# Zero-padded fractional part. Written out rather than reusing a general pad
+# because the leading zeros carry the magnitude: 0.05 printed as "0.5" is wrong
+# by a factor of ten and looks perfectly reasonable.
+fn pad_zeros(frac: I64, places: I64) -> Str {
+  let s = str(frac)
+  let out = s
+  while len(out) < places {
+    out = "0" + out
+  }
+  out
+}
+
+# Compact form for a value whose axis spans several orders of magnitude. Loss
+# curves are the reason this exists: a run that starts at 4.6 and ends at 3e-4
+# has no fixed-point notation that reads well at both ends.
+fn compact(v: F64) -> Str {
+  let a = abs_f(v)
+  if a == 0.0 { return "0" }
+  if a >= 0.001 && a < 100000.0 { return trim_zeros(fixed(v, significant_places(a))) }
+  let e = exponent_of(a)
+  let mant = v / pow10f(e)
+  trim_zeros(fixed(mant, 2)) + "e" + str(e)
+}
+
+fn significant_places(a: F64) -> I64 {
+  if a >= 1000.0 { 0 }
+  else if a >= 100.0 { 1 }
+  else if a >= 1.0 { 2 }
+  else if a >= 0.01 { 3 }
+  else { 4 }
+}
+
+# Trailing zeros are dropped only in compact form, never on an axis, because on
+# an axis they hold the column alignment.
+fn trim_zeros(s: Str) -> Str {
+  if index_of(s, ".") < 0 { return s }
+  let end = len(s)
+  while end > 0 && s[end - 1] == byte_of("0") {
+    end = end - 1
+  }
+  if end > 0 && s[end - 1] == byte_of(".") { end = end - 1 }
+  slice(s, 0, end)
+}
+
+fn exponent_of(a: F64) -> I64 {
+  let e: I64 = 0
+  let x = a
+  while x >= 10.0 {
+    x = x / 10.0
+    e = e + 1
+  }
+  while x < 1.0 {
+    x = x * 10.0
+    e = e - 1
+  }
+  e
+}
+
+fn pow10(places: I64) -> F64 = f64(int_pow10(places))
+
+fn pow10f(e: I64) -> F64 {
+  let out = 1.0
+  let n = if e < 0 { 0 - e } else { e }
+  let i: I64 = 0
+  while i < n {
+    out = out * 10.0
+    i = i + 1
+  }
+  if e < 0 { 1.0 / out } else { out }
+}
+
+fn int_pow10(places: I64) -> I64 {
+  let out: I64 = 1
+  let i: I64 = 0
+  while i < places {
+    out = out * 10
+    i = i + 1
+  }
+  out
+}
+
+fn abs_f(v: F64) -> F64 = if v < 0.0 { 0.0 - v } else { v }
+
+fn is_nan(v: F64) -> Bool = v != v
+
+fn is_inf(v: F64) -> Bool = v > 1.0e308 || v < 0.0 - 1.0e308
+
+fn byte_of(s: Str) -> I64 = s[0]
+
+fn index_of(hay: Str, needle: Str) -> I64 {
+  let n = len(needle)
+  let h = len(hay)
+  if n == 0 { return 0 }
+  if n > h { return 0 - 1 }
+  let i: I64 = 0
+  while i <= h - n {
+    if slice(hay, i, i + n) == needle { return i }
+    i = i + 1
+  }
+  0 - 1
+}
+
+fn max_f(a: F64, b: F64) -> F64 = if a > b { a } else { b }
+fn min_f(a: F64, b: F64) -> F64 = if a < b { a } else { b }
+fn max_i(a: I64, b: I64) -> I64 = if a > b { a } else { b }
+fn min_i(a: I64, b: I64) -> I64 = if a < b { a } else { b }

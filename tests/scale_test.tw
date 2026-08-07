@@ -1,0 +1,104 @@
+mode systems
+
+import "harness.tw" as t
+import "../src/scale.tw" as sc
+import "../src/fmtnum.tw" as f
+
+fn a_step_is_always_one_two_two_and_a_half_or_five_times_a_power_of_ten() {
+  t.near("0.9 rounds up to 1", sc.nice_step(0.9), 1.0, 1.0e-12)
+  t.near("1.1 rounds up to 2", sc.nice_step(1.1), 2.0, 1.0e-12)
+  t.near("2.3 rounds up to 2.5", sc.nice_step(2.3), 2.5, 1.0e-12)
+  t.near("3.0 rounds up to 5", sc.nice_step(3.0), 5.0, 1.0e-12)
+  t.near("6.0 rounds up to 10", sc.nice_step(6.0), 10.0, 1.0e-12)
+  t.near("0.021 rounds up to 0.025", sc.nice_step(0.021), 0.025, 1.0e-12)
+  t.near("370 rounds up to 500", sc.nice_step(370.0), 500.0, 1.0e-9)
+}
+
+fn an_axis_covers_its_data_and_starts_on_a_tick() {
+  let a = sc.axis(0.3, 9.4, 5)
+  t.check("the axis contains the data", a.lo <= 0.3 && a.hi >= 9.4)
+  t.near("the low bound is a multiple of the step", a.lo % a.step, 0.0, 1.0e-9)
+  t.near("the high bound is a multiple of the step", a.hi % a.step, 0.0, 1.0e-9)
+  t.check("there are at least two ticks", len(a.ticks) >= 2)
+  t.near("the first tick is the low bound", a.ticks[0], a.lo, 1.0e-9)
+  t.near("the last tick is the high bound", a.ticks[len(a.ticks) - 1], a.hi, 1.0e-9)
+}
+
+fn an_axis_that_crosses_zero_is_not_clipped_on_the_negative_side() {
+  # i64() truncates toward zero, so the naive floor of a negative bound rounds
+  # the wrong way and cuts the bottom off the plot. This is that test.
+  let a = sc.axis(0.0 - 3.7, 2.1, 5)
+  t.check("the low bound is below the data", a.lo <= 0.0 - 3.7)
+  t.check("the high bound is above the data", a.hi >= 2.1)
+}
+
+fn a_constant_series_gets_a_range_proportional_to_its_own_magnitude() {
+  let small = sc.axis(1.0e-6, 1.0e-6, 4)
+  let large = sc.axis(1000000.0, 1000000.0, 4)
+  t.check("a flat tiny series has a nonzero range", small.hi > small.lo)
+  t.check("a flat large series has a range worth more than one", large.hi - large.lo > 1.0)
+}
+
+fn tick_labels_carry_enough_decimals_to_tell_the_ticks_apart() {
+  let a = sc.axis(1.0, 1.2, 6)
+  let first = sc.tick_label(a, a.ticks[0])
+  let second = sc.tick_label(a, a.ticks[1])
+  t.check("adjacent tick labels differ", first != second)
+}
+
+fn a_projection_puts_the_bounds_at_the_ends() {
+  let a = sc.axis(0.0, 10.0, 6)
+  let p = sc.projection(a, 40)
+  t.equal_i64("the low bound is the first cell", sc.to_cell(p, a.lo), 0)
+  t.equal_i64("the high bound is the last cell", sc.to_cell(p, a.hi), 39)
+}
+
+fn the_live_axis_grows_at_once_when_a_point_leaves_the_range() {
+  let l = sc.live_new(5)
+  l = sc.settle(l, 0.0, 1.0)
+  let before = l.axis.hi
+  l = sc.settle(l, 0.0, 12.0)
+  t.check("the axis grew to contain the new point", l.axis.hi >= 12.0)
+  t.check("the axis did in fact change", l.axis.hi > before)
+}
+
+fn the_live_axis_does_not_shrink_on_one_quiet_frame() {
+  let l = sc.live_new(5)
+  l = sc.settle(l, 0.0, 100.0)
+  let wide = l.axis.hi
+  # One frame of data occupying a tenth of the range must not rescale, or a
+  # loss curve rescales on the first step after it falls.
+  l = sc.settle(l, 0.0, 10.0)
+  t.near("the axis held still", l.axis.hi, wide, 1.0e-9)
+}
+
+fn the_live_axis_shrinks_once_the_data_has_stayed_small_for_long_enough() {
+  let l = sc.live_new(5)
+  l = sc.settle(l, 0.0, 100.0)
+  let wide = l.axis.hi
+  let i: I64 = 0
+  while i < sc.SETTLE_FRAMES + 1 {
+    l = sc.settle(l, 0.0, 10.0)
+    i = i + 1
+  }
+  t.check("the axis eventually tightened", l.axis.hi < wide)
+}
+
+fn a_log_axis_has_a_tick_at_every_decade() {
+  let a = sc.log_axis(0.0004, 4.6)
+  t.check("the low bound is at or below the data", a.lo <= 0.0004)
+  t.check("the high bound is at or above the data", a.hi >= 4.6)
+  t.check("every decade in the span has a tick", len(a.ticks) >= 5)
+}
+
+a_step_is_always_one_two_two_and_a_half_or_five_times_a_power_of_ten()
+an_axis_covers_its_data_and_starts_on_a_tick()
+an_axis_that_crosses_zero_is_not_clipped_on_the_negative_side()
+a_constant_series_gets_a_range_proportional_to_its_own_magnitude()
+tick_labels_carry_enough_decimals_to_tell_the_ticks_apart()
+a_projection_puts_the_bounds_at_the_ends()
+the_live_axis_grows_at_once_when_a_point_leaves_the_range()
+the_live_axis_does_not_shrink_on_one_quiet_frame()
+the_live_axis_shrinks_once_the_data_has_stayed_small_for_long_enough()
+a_log_axis_has_a_tick_at_every_decade()
+t.report("scale")

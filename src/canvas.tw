@@ -1,0 +1,214 @@
+# canvas.tw - a subcell dot grid that degrades to whatever the terminal has.
+#
+# A terminal cell is one character, but a plot wants points finer than that.
+# Braille gives 2x4 addressable dots per cell, quadrant blocks give 2x2, and an
+# ASCII terminal gives 1x1. The canvas is written once against a resolution the
+# caller never picks: it asks `for_caps` for a canvas and gets whichever it can
+# actually print.
+#
+# The degradation ladder is twill's, from `docs/cli-design.md`, not a second one
+# invented here. Capability is detected in twill's `src/term/caps.tw` and this
+# file only reads the answer. The bias is the same one: when a signal is
+# ambiguous, assume less.
+#
+# The canvas holds a series id per cell rather than a colour. Colour is a
+# rendering decision and belongs to the theme; a canvas that stored RGB would
+# have to know about tiers, and then there would be two files that decide.
+
+mode systems
+
+import "../twill_modules/twill/src/term/caps.tw" as cp
+
+let RES_BRAILLE: I64 = 0   # 2 x 4 dots per cell
+let RES_BLOCK: I64 = 1     # 2 x 2 quadrants per cell
+let RES_ASCII: I64 = 2     # 1 x 1, the cell itself
+
+struct Canvas {
+  cols: I64,
+  rows: I64,
+  res: I64,
+  sub_x: I64,
+  sub_y: I64,
+  # One bitmask per cell. Braille uses all eight bits, blocks use four, ASCII
+  # uses one.
+  dots: Arr[I64],
+  # Series id per cell, 0 meaning unpainted. When two series cross in one cell
+  # the later one wins, which is the same rule as drawing order and is the only
+  # rule that does not require blending colours that were chosen to be distinct.
+  owner: Arr[I64],
+}
+
+# The one place a resolution is chosen. Braille needs unicode; blocks need
+# unicode; without it there is only ASCII. There is no attempt to distinguish
+# terminals that have blocks but not braille, because every font that ships
+# quadrant blocks has shipped braille for a decade and guessing wrong costs a
+# screen of tofu.
+fn resolution_for(c: cp.Caps) -> I64 = if c.unicode { RES_BRAILLE } else { RES_ASCII }
+
+fn new(cols: I64, rows: I64, res: I64) -> Canvas {
+  let sx = sub_x_of(res)
+  let sy = sub_y_of(res)
+  let n = cols * rows
+  let dots: Arr[I64] = []
+  let owner: Arr[I64] = []
+  let i: I64 = 0
+  while i < n {
+    dots.push(0)
+    owner.push(0)
+    i = i + 1
+  }
+  Canvas { cols: cols, rows: rows, res: res, sub_x: sx, sub_y: sy, dots: dots, owner: owner }
+}
+
+fn for_caps(c: cp.Caps, cols: I64, rows: I64) -> Canvas = new(cols, rows, resolution_for(c))
+
+fn sub_x_of(res: I64) -> I64 = if res == RES_BRAILLE { 2 } else if res == RES_BLOCK { 2 } else { 1 }
+fn sub_y_of(res: I64) -> I64 = if res == RES_BRAILLE { 4 } else if res == RES_BLOCK { 2 } else { 1 }
+
+fn width_dots(cv: Canvas) -> I64 = cv.cols * cv.sub_x
+fn height_dots(cv: Canvas) -> I64 = cv.rows * cv.sub_y
+
+# ── Plotting ────────────────────────────────────────────────────────────────
+
+# Coordinates are dot coordinates with the origin at the top left, because that
+# is the order the rows are emitted in. Callers work in value space and flip
+# once, in `chart.tw`, so the flip lives in exactly one place.
+fn plot(cv: Canvas, x: I64, y: I64, series: I64) {
+  # Silently ignoring out-of-range points is deliberate. A point outside the
+  # axis bounds is a normal consequence of a fixed axis on live data, and the
+  # alternative, growing the canvas, would change the scale mid-frame.
+  if x < 0 || y < 0 { return }
+  if x >= width_dots(cv) || y >= height_dots(cv) { return }
+  let cell = (y / cv.sub_y) * cv.cols + (x / cv.sub_x)
+  let bit = bit_index(cv.res, x % cv.sub_x, y % cv.sub_y)
+  cv.dots[cell] = set_bit(cv.dots[cell], bit)
+  cv.owner[cell] = series
+}
+
+fn plot_f(cv: Canvas, x: F64, y: F64, series: I64) = plot(cv, i64(x + 0.5), i64(y + 0.5), series)
+
+# A straight run between two sample points. A scatter of dots at the samples is
+# not a line: at any useful width there are more columns than points, and the
+# gaps read as missing data rather than as interpolation.
+fn line(cv: Canvas, x0: I64, y0: I64, x1: I64, y1: I64, series: I64) {
+  let dx = abs_i(x1 - x0)
+  let dy = 0 - abs_i(y1 - y0)
+  let sx = if x0 < x1 { 1 } else { 0 - 1 }
+  let sy = if y0 < y1 { 1 } else { 0 - 1 }
+  let err = dx + dy
+  let x = x0
+  let y = y0
+  let guard: I64 = 0
+  let limit = width_dots(cv) + height_dots(cv) + 4
+  while guard < limit {
+    plot(cv, x, y, series)
+    if x == x1 && y == y1 { return }
+    let e2 = err * 2
+    if e2 >= dy {
+      err = err + dy
+      x = x + sx
+    }
+    if e2 <= dx {
+      err = err + dx
+      y = y + sy
+    }
+    guard = guard + 1
+  }
+}
+
+# A filled column from the baseline, for bars and histograms. Filling in dot
+# space rather than cell space is what lets a bar end halfway up a cell, which
+# is the difference between a bar chart and a staircase.
+fn column(cv: Canvas, x: I64, y_from: I64, y_to: I64, series: I64) {
+  let a = min_i(y_from, y_to)
+  let b = max_i(y_from, y_to)
+  let y = a
+  while y <= b {
+    plot(cv, x, y, series)
+    y = y + 1
+  }
+}
+
+# ── Rendering ───────────────────────────────────────────────────────────────
+
+# One row of cells as glyphs, with no colour. Colour is applied by the caller,
+# which knows the theme and the tier; this returns the shape.
+fn row_glyphs(cv: Canvas, row: I64) -> Arr[Str] {
+  let out: Arr[Str] = []
+  let c: I64 = 0
+  while c < cv.cols {
+    out.push(glyph(cv.res, cv.dots[row * cv.cols + c]))
+    c = c + 1
+  }
+  out
+}
+
+fn row_owners(cv: Canvas, row: I64) -> Arr[I64] {
+  let out: Arr[I64] = []
+  let c: I64 = 0
+  while c < cv.cols {
+    out.push(cv.owner[row * cv.cols + c])
+    c = c + 1
+  }
+  out
+}
+
+fn glyph(res: I64, mask: I64) -> Str {
+  if mask == 0 { return " " }
+  if res == RES_BRAILLE { return braille(mask) }
+  if res == RES_BLOCK { return quadrant(mask) }
+  "*"
+}
+
+# U+2800 plus the dot mask, encoded as UTF-8 by hand. The block is
+# U+2800..U+28FF, so the encoding is always three bytes and the arithmetic below
+# is exact rather than a general encoder narrowed to a case.
+fn braille(mask: I64) -> Str = chr(226) + chr(160 + mask / 64) + chr(128 + mask % 64)
+
+# Braille dot numbering is column-major and the last row was added later, so the
+# bit for (col, row) is not row * 2 + col and never will be. Written as a table
+# because the table is the specification.
+fn braille_bit(cx: I64, cy: I64) -> I64 {
+  if cy == 3 { return if cx == 0 { 6 } else { 7 } }
+  if cx == 0 { cy } else { 3 + cy }
+}
+
+fn bit_index(res: I64, cx: I64, cy: I64) -> I64 {
+  if res == RES_BRAILLE { return braille_bit(cx, cy) }
+  if res == RES_BLOCK { return cy * 2 + cx }
+  0
+}
+
+let QUADRANTS: Arr[Str] = [
+  " ", "▘", "▝", "▀",
+  "▖", "▌", "▞", "▛",
+  "▗", "▚", "▐", "▜",
+  "▄", "▙", "▟", "█",
+]
+
+fn quadrant(mask: I64) -> Str = QUADRANTS[mask % 16]
+
+# ── Bit handling without the bitwise operators ──────────────────────────────
+#
+# `mode systems` spells bitwise or as `or`, which is also short-circuiting
+# logical or. Rather than rely on the operand types disambiguating it, the two
+# operations this file needs are written in arithmetic, which is unambiguous and
+# costs one branch. Recorded in docs/needs.md.
+
+fn set_bit(mask: I64, bit: I64) -> I64 = if bit_set(mask, bit) { mask } else { mask + pow2(bit) }
+
+fn bit_set(mask: I64, bit: I64) -> Bool = (mask / pow2(bit)) % 2 == 1
+
+fn pow2(bit: I64) -> I64 {
+  let out: I64 = 1
+  let i: I64 = 0
+  while i < bit {
+    out = out * 2
+    i = i + 1
+  }
+  out
+}
+
+fn abs_i(v: I64) -> I64 = if v < 0 { 0 - v } else { v }
+fn min_i(a: I64, b: I64) -> I64 = if a < b { a } else { b }
+fn max_i(a: I64, b: I64) -> I64 = if a > b { a } else { b }

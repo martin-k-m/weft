@@ -1,0 +1,227 @@
+# bars.tw - bar charts and histograms.
+#
+# A bar chart draws named categories. A histogram draws a distribution and has
+# to choose its own bins, which is the whole of the interesting work: the bin
+# count decides what the reader concludes, and a default that gets it wrong
+# produces a plausible picture of a shape the data does not have.
+#
+# Bars are drawn horizontally by default and histograms vertically, which is not
+# a symmetry gap. A bar chart's labels are words and words fit down the left. A
+# histogram's labels are numbers on a continuous axis and belong under it.
+
+mode systems
+
+import "../twill_modules/twill/src/term/caps.tw" as cp
+import "../twill_modules/twill/src/term/ansi.tw" as ansi
+import "../twill_modules/twill/src/term/width.tw" as w
+import "canvas.tw" as cv
+import "scale.tw" as sc
+import "theme.tw" as th
+import "chart.tw" as ch
+import "fmtnum.tw" as f
+
+struct Bar { label: Str, value: F64 }
+
+fn bar(label: Str, value: F64) -> Bar = Bar { label: label, value: value }
+
+# Eighth-blocks, so a bar can end partway through a cell. Without them every
+# value rounds to a whole column and two values a percent apart draw identically,
+# which is the failure that makes terminal bar charts look like a toy.
+let EIGHTHS: Arr[Str] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]
+
+fn horizontal(title: Str, bars: Arr[Bar], cols: I64, caps: cp.Caps) -> Str {
+  if len(bars) == 0 { return "" }
+  let label_w = widest_label(bars)
+  let hi = f.max_f(max_value(bars), 0.0)
+  let lo = f.min_f(min_value(bars), 0.0)
+  # The axis always includes zero. A bar chart whose baseline is not zero
+  # multiplies differences by an arbitrary factor, and it is the single most
+  # common way a chart misleads without containing a false number.
+  let axis = sc.axis(lo, hi, ch.tick_target_cols(cols))
+  let track = cols - label_w - 2
+  let out = ""
+  if len(title) > 0 { out = out + ch.line_of(caps, ansi.paint(caps, th.title_style(), title)) }
+  let i: I64 = 0
+  while i < len(bars) {
+    let b = bars[i]
+    let filled = fill(caps, b.value, axis, track)
+    out = out + ch.line_of(caps,
+      ansi.paint(caps, th.label_style(), w.pad_left(b.label, label_w)) + " " +
+      ansi.paint(caps, th.series_style(i), filled) + " " +
+      ansi.paint(caps, th.label_style(), f.compact(b.value)))
+    i = i + 1
+  }
+  out
+}
+
+fn fill(caps: cp.Caps, v: F64, axis: sc.Axis, track: I64) -> Str {
+  let span = if axis.hi - axis.lo > 0.0 { axis.hi - axis.lo } else { 1.0 }
+  let cells_x8 = i64((v - axis.lo) / span * f64(track) * 8.0)
+  if !caps.unicode { return w.repeat("#", cells_x8 / 8) }
+  let whole = cells_x8 / 8
+  let rem = cells_x8 % 8
+  w.repeat("█", whole) + EIGHTHS[if rem < 0 { 0 } else { rem }]
+}
+
+fn widest_label(bars: Arr[Bar]) -> I64 {
+  let n: I64 = 0
+  let i: I64 = 0
+  while i < len(bars) {
+    n = f.max_i(n, w.display_width(bars[i].label))
+    i = i + 1
+  }
+  n
+}
+
+fn max_value(bars: Arr[Bar]) -> F64 {
+  let m = bars[0].value
+  let i: I64 = 1
+  while i < len(bars) {
+    m = f.max_f(m, bars[i].value)
+    i = i + 1
+  }
+  m
+}
+
+fn min_value(bars: Arr[Bar]) -> F64 {
+  let m = bars[0].value
+  let i: I64 = 1
+  while i < len(bars) {
+    m = f.min_f(m, bars[i].value)
+    i = i + 1
+  }
+  m
+}
+
+# ── Histogram ───────────────────────────────────────────────────────────────
+
+struct Hist {
+  lo: F64,
+  hi: F64,
+  width: F64,
+  counts: Arr[I64],
+}
+
+# Freedman-Diaconis, falling back to Sturges. FD sets the bin width from the
+# interquartile range and the sample size, so it is not fooled by the outlier
+# that makes an equal-width rule spread the whole distribution over two bins.
+# It degenerates when the IQR is zero, which happens on discrete data with a
+# dominant value, and Sturges is the safe answer there rather than a crash.
+fn bin_count(xs: Arr[F64], lo: F64, hi: F64) -> I64 {
+  let n = len(xs)
+  if n < 2 { return 1 }
+  let sorted = sorted_copy(xs)
+  let iqr = quantile(sorted, 0.75) - quantile(sorted, 0.25)
+  if iqr <= 0.0 { return sturges(n) }
+  let bw = 2.0 * iqr / cbrt(f64(n))
+  if bw <= 0.0 { return sturges(n) }
+  clamp_i(i64((hi - lo) / bw + 0.5), 1, 200)
+}
+
+fn sturges(n: I64) -> I64 = clamp_i(i64(log(f64(n)) / log(2.0)) + 1, 1, 200)
+
+fn histogram(xs: Arr[F64], bins: I64) -> Hist {
+  let lo = min_of(xs)
+  let hi = max_of(xs)
+  let n = if bins > 0 { bins } else { bin_count(xs, lo, hi) }
+  # Bin edges are snapped to round numbers for the same reason ticks are: a
+  # histogram whose first bin starts at 0.03871 has an axis nobody can read.
+  let axis = sc.axis(lo, hi, n + 1)
+  let width = (axis.hi - axis.lo) / f64(n)
+  let counts: Arr[I64] = []
+  let i: I64 = 0
+  while i < n {
+    counts.push(0)
+    i = i + 1
+  }
+  let j: I64 = 0
+  while j < len(xs) {
+    let k = i64((xs[j] - axis.lo) / width)
+    # The last bin is closed at the top. Every other bin is half open, so a
+    # value exactly on an edge falls in the bin above it, and the maximum would
+    # otherwise fall off the end into a bin that does not exist.
+    let idx = clamp_i(k, 0, n - 1)
+    counts[idx] = counts[idx] + 1
+    j = j + 1
+  }
+  Hist { lo: axis.lo, hi: axis.hi, width: width, counts: counts }
+}
+
+# Rendered through the shared chart frame, as a step series, so a histogram and
+# a line plot on the same page have the same axes, gutter and truncation.
+fn hist_chart(title: Str, h: Hist, cols: I64, rows: I64) -> ch.Chart {
+  let xs: Arr[F64] = []
+  let ys: Arr[F64] = []
+  let i: I64 = 0
+  while i < len(h.counts) {
+    # Two samples per bin, at its edges, so the outline is a step and not a
+    # polygon joining bin centres. A polygon claims the density varies inside
+    # the bin, and the entire point of a bin is that it does not know.
+    xs.push(h.lo + f64(i) * h.width)
+    ys.push(f64(h.counts[i]))
+    xs.push(h.lo + f64(i + 1) * h.width)
+    ys.push(f64(h.counts[i]))
+    i = i + 1
+  }
+  let c = ch.chart(title, cols, rows)
+  c.series.push(ch.series("count", xs, ys, ch.MARK_LINE))
+  c
+}
+
+fn quantile(sorted: Arr[F64], q: F64) -> F64 {
+  let n = len(sorted)
+  if n == 0 { return 0.0 }
+  let pos = q * f64(n - 1)
+  let i = i64(pos)
+  let frac = pos - f64(i)
+  if i + 1 >= n { return sorted[n - 1] }
+  sorted[i] * (1.0 - frac) + sorted[i + 1] * frac
+}
+
+# Insertion sort. The only caller is the quartile calculation on a sample that
+# is already in memory, and a histogram is drawn once per plot rather than per
+# frame, so the simpler code wins over the faster one.
+fn sorted_copy(xs: Arr[F64]) -> Arr[F64] {
+  let out: Arr[F64] = []
+  let i: I64 = 0
+  while i < len(xs) {
+    out.push(xs[i])
+    i = i + 1
+  }
+  let a: I64 = 1
+  while a < len(out) {
+    let v = out[a]
+    let b = a - 1
+    while b >= 0 && out[b] > v {
+      out[b + 1] = out[b]
+      b = b - 1
+    }
+    out[b + 1] = v
+    a = a + 1
+  }
+  out
+}
+
+fn cbrt(v: F64) -> F64 = exp(log(v) / 3.0)
+
+fn min_of(xs: Arr[F64]) -> F64 {
+  let m = xs[0]
+  let i: I64 = 1
+  while i < len(xs) {
+    m = f.min_f(m, xs[i])
+    i = i + 1
+  }
+  m
+}
+
+fn max_of(xs: Arr[F64]) -> F64 {
+  let m = xs[0]
+  let i: I64 = 1
+  while i < len(xs) {
+    m = f.max_f(m, xs[i])
+    i = i + 1
+  }
+  m
+}
+
+fn clamp_i(v: I64, lo: I64, hi: I64) -> I64 = if v < lo { lo } else if v > hi { hi } else { v }

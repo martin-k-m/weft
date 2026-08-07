@@ -1,0 +1,97 @@
+mode systems
+
+import "harness.tw" as t
+import "../src/svg.tw" as svg
+import "../src/chart.tw" as ch
+import "../src/scale.tw" as sc
+import "../src/fmtnum.tw" as f
+
+fn sample() -> ch.Chart {
+  let c = ch.chart("loss", 60, 8)
+  let ys: Arr[F64] = []
+  let i: I64 = 0
+  while i < 40 {
+    ys.push(4.0 / (1.0 + f64(i) * 0.2))
+    i = i + 1
+  }
+  c.series.push(ch.series_y("train", ys, ch.MARK_LINE))
+  c
+}
+
+fn the_document_is_closed_and_standalone() {
+  let out = svg.render(sample(), svg.box(640, 320))
+  t.check("it opens with an svg element", starts_with(out, "<svg"))
+  t.check("it closes the element", ends_with(out, "</svg>\n"))
+  t.check("it names the svg namespace", contains(out, "http://www.w3.org/2000/svg"))
+  t.check("it references no external file", !contains(out, "<image") && !contains(out, "@import"))
+  t.check("it carries no script", !contains(out, "<script"))
+}
+
+fn the_palette_is_twills_and_nothing_else() {
+  let out = svg.render(sample(), svg.box(640, 320))
+  t.check("the accent is present", contains(out, "#7FE3C4"))
+  t.check("the background is the deep tone", contains(out, "#12332C"))
+}
+
+fn the_terminal_and_the_svg_scale_the_same_data_the_same_way() {
+  # The point of the shared Axis. If these two ever disagree, one plot in a pull
+  # request and one plot in a terminal show different ranges of one series.
+  let c = sample()
+  let b = ch.bounds_of(c.series)
+  let term_axis = sc.axis(b.y_lo, b.y_hi, 6)
+  let out = svg.render(c, svg.box(640, 320))
+  t.check("the top tick label appears in the svg",
+    contains(out, sc.tick_label(term_axis, term_axis.ticks[len(term_axis.ticks) - 1])))
+}
+
+fn a_gap_in_the_data_breaks_the_path_rather_than_bridging_it() {
+  let c = ch.chart("with a gap", 60, 8)
+  let ys: Arr[F64] = [1.0, 2.0, 0.0 / 0.0, 4.0, 5.0]
+  c.series.push(ch.series_y("s", ys, ch.MARK_LINE))
+  let out = svg.render(c, svg.box(400, 200))
+  t.equal_i64("two runs became two paths", count(out, "<path d=\"M"), 2)
+}
+
+fn text_is_escaped_so_a_label_cannot_break_the_document() {
+  t.equal_str("angle brackets are escaped", svg.escape("a<b>c"), "a&lt;b&gt;c")
+  t.equal_str("ampersands are escaped first", svg.escape("a&b"), "a&amp;b")
+  t.equal_str("quotes are escaped", svg.escape("\"x\""), "&quot;x&quot;")
+}
+
+fn the_ramp_ends_are_the_palette_ends() {
+  t.equal_str("the bottom of the ramp is deep", svg.ramp_hex(0), "#12332C")
+  t.equal_str("the top of the ramp is accent", svg.ramp_hex(1000), "#7FE3C4")
+  t.equal_str("the middle of the ramp is teal", svg.ramp_hex(500), "#4FB79B")
+}
+
+fn hex_is_two_digits_always() {
+  t.equal_str("zero pads", svg.hex2(0), "00")
+  t.equal_str("fifteen pads", svg.hex2(15), "0F")
+  t.equal_str("two five five", svg.hex2(255), "FF")
+  t.equal_str("out of range clamps", svg.hex2(900), "FF")
+}
+
+fn contains(hay: Str, needle: Str) -> Bool = count(hay, needle) > 0
+
+fn count(hay: Str, needle: Str) -> I64 {
+  let n = len(needle)
+  let found: I64 = 0
+  let i: I64 = 0
+  while i + n <= len(hay) {
+    if slice(hay, i, i + n) == needle { found = found + 1 }
+    i = i + 1
+  }
+  found
+}
+
+fn starts_with(s: Str, p: Str) -> Bool = len(s) >= len(p) && slice(s, 0, len(p)) == p
+fn ends_with(s: Str, p: Str) -> Bool = len(s) >= len(p) && slice(s, len(s) - len(p), len(s)) == p
+
+the_document_is_closed_and_standalone()
+the_palette_is_twills_and_nothing_else()
+the_terminal_and_the_svg_scale_the_same_data_the_same_way()
+a_gap_in_the_data_breaks_the_path_rather_than_bridging_it()
+text_is_escaped_so_a_label_cannot_break_the_document()
+the_ramp_ends_are_the_palette_ends()
+hex_is_two_digits_always()
+t.report("svg")

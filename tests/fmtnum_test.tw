@@ -1,0 +1,56 @@
+mode systems
+
+import "harness.tw" as t
+import "../src/fmtnum.tw" as f
+
+fn fixed_writes_the_requested_number_of_decimals_exactly() {
+  t.equal_str("no decimals", f.fixed(3.7, 0), "4")
+  t.equal_str("two decimals", f.fixed(3.14159, 2), "3.14")
+  t.equal_str("a value under one keeps its leading zero", f.fixed(0.5, 2), "0.50")
+  t.equal_str("the fraction is zero padded", f.fixed(1.05, 2), "1.05")
+  t.equal_str("a negative keeps its sign", f.fixed(0.0 - 2.5, 1), "-2.5")
+}
+
+fn a_fraction_of_five_hundredths_is_not_written_as_five_tenths() {
+  # The padding bug this test exists for is a factor of ten and looks entirely
+  # reasonable on the page.
+  t.equal_str("0.05 to two places", f.fixed(0.05, 2), "0.05")
+  t.equal_str("0.005 to three places", f.fixed(0.005, 3), "0.005")
+}
+
+fn negative_zero_is_written_as_zero() {
+  # A tick at minus zero on an axis that crosses zero is a rendering artefact
+  # and a reader will spend a moment wondering what it means.
+  t.equal_str("a small negative rounding to zero has no sign", f.fixed(0.0 - 0.001, 2), "0.00")
+}
+
+fn a_step_decides_how_many_decimals_a_label_needs() {
+  t.equal_i64("a step of one needs none", f.decimals_for_step(1.0), 0)
+  t.equal_i64("a step of a tenth needs one", f.decimals_for_step(0.1), 1)
+  t.equal_i64("a step of a hundredth needs two", f.decimals_for_step(0.01), 2)
+  t.equal_i64("a step of twenty five thousandths needs two", f.decimals_for_step(0.025), 2)
+}
+
+fn compact_switches_to_an_exponent_only_where_fixed_notation_fails() {
+  t.equal_str("a plain value stays plain", f.compact(4.5), "4.5")
+  t.equal_str("a whole number loses its point", f.compact(1200.0), "1200")
+  t.equal_str("zero is zero", f.compact(0.0), "0")
+  t.check("a tiny value uses an exponent", index_of(f.compact(0.0000031), "e") > 0)
+  t.check("a huge value uses an exponent", index_of(f.compact(4.2e12), "e") > 0)
+}
+
+fn the_non_finite_values_are_named_rather_than_printed_as_digits() {
+  t.equal_str("nan", f.fixed(0.0 / 0.0, 2), "NaN")
+  t.check("nan is detected", f.is_nan(0.0 / 0.0))
+  t.check("a real number is not nan", !f.is_nan(1.0))
+}
+
+fn index_of(hay: Str, needle: Str) -> I64 = f.index_of(hay, needle)
+
+fixed_writes_the_requested_number_of_decimals_exactly()
+a_fraction_of_five_hundredths_is_not_written_as_five_tenths()
+negative_zero_is_written_as_zero()
+a_step_decides_how_many_decimals_a_label_needs()
+compact_switches_to_an_exponent_only_where_fixed_notation_fails()
+the_non_finite_values_are_named_rather_than_printed_as_digits()
+t.report("fmtnum")

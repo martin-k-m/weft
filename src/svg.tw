@@ -1,0 +1,327 @@
+# svg.tw - the same chart, off the terminal.
+#
+# The SVG path renders from the same `Chart` and the same `Axis` as the terminal
+# path. That is the whole design constraint: if the two computed their own
+# scales, the plot in the terminal and the plot in the pull request would show
+# different ranges from the same data, and one of them would be believed.
+#
+# What differs is only what a pixel surface can do that a cell grid cannot:
+# real coordinates instead of dots, a stroke width, and text placed by baseline.
+# Nothing is added that has no terminal counterpart, so no chart exists in one
+# medium and not the other.
+#
+# The output is a standalone SVG with no external font, no CSS file and no
+# script. It has to survive being embedded in a README by a renderer that
+# strips most of that.
+
+mode systems
+
+import "chart.tw" as ch
+import "scale.tw" as sc
+import "bars.tw" as bars
+import "heatmap.tw" as hm
+import "fmtnum.tw" as f
+
+# The palette, spelled as hex because an SVG carries no theme. Same five values
+# as `theme.tw`; if one changes, both change.
+let PALE: Str = "#D2F0E4"
+let MINT: Str = "#A8DCCB"
+let ACCENT: Str = "#7FE3C4"
+let TEAL: Str = "#4FB79B"
+let DEEP: Str = "#12332C"
+
+fn series_colour(i: I64) -> Str {
+  let k = i % 4
+  if k == 0 { ACCENT } else if k == 1 { PALE } else if k == 2 { TEAL } else { MINT }
+}
+
+struct Box {
+  width: I64,
+  height: I64,
+  left: I64,     # gutter for y labels
+  bottom: I64,   # room for x labels
+  top: I64,      # room for the title
+  right: I64,
+}
+
+fn box(width: I64, height: I64) -> Box =
+  Box { width: width, height: height, left: 56, bottom: 34, top: 28, right: 12 }
+
+fn plot_w(b: Box) -> I64 = b.width - b.left - b.right
+fn plot_h(b: Box) -> I64 = b.height - b.top - b.bottom
+
+# Font stack, not a font. A named font that the reader does not have is
+# substituted silently and the label widths that the layout assumed are wrong.
+# The generic families are the ones every renderer resolves.
+let FONT: Str = "ui-monospace, SFMono-Regular, Menlo, monospace"
+
+fn render(c: ch.Chart, b: Box) -> Str {
+  let bounds = ch.bounds_of(c.series)
+  let ya = if c.y_fixed { c.y_axis } else { sc.axis(bounds.y_lo, bounds.y_hi, 6) }
+  let xa = sc.axis(bounds.x_lo, bounds.x_hi, 6)
+  let out = header(b) + background(b) + title(c, b)
+  out = out + grid(xa, ya, b) + axes(b)
+  let i: I64 = 0
+  while i < len(c.series) {
+    out = out + draw_series(c.series[i], xa, ya, b, i)
+    i = i + 1
+  }
+  out = out + x_labels(xa, b) + y_labels(ya, b)
+  if len(c.series) > 1 { out = out + legend(c, b) }
+  out + "</svg>\n"
+}
+
+fn header(b: Box) -> Str =
+  "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" + str(b.width) +
+  "\" height=\"" + str(b.height) + "\" viewBox=\"0 0 " + str(b.width) + " " +
+  str(b.height) + "\" font-family=\"" + FONT + "\">\n"
+
+# A solid plate behind the chart. The palette is built for a dark ground and
+# accent on white is too light to read, so the background is part of the chart
+# rather than a preference; twill's brand guidance says the same about the mark.
+fn background(b: Box) -> Str =
+  "<rect width=\"" + str(b.width) + "\" height=\"" + str(b.height) + "\" fill=\"" + DEEP + "\"/>\n"
+
+fn title(c: ch.Chart, b: Box) -> Str {
+  if len(c.title) == 0 { return "" }
+  "<text x=\"" + str(b.left) + "\" y=\"18\" fill=\"" + ACCENT +
+    "\" font-size=\"13\">" + escape(c.title) + "</text>\n"
+}
+
+fn axes(b: Box) -> Str {
+  let x0 = b.left
+  let y0 = b.top + plot_h(b)
+  "<path d=\"M" + str(x0) + " " + str(b.top) + " L" + str(x0) + " " + str(y0) +
+    " L" + str(x0 + plot_w(b)) + " " + str(y0) +
+    "\" fill=\"none\" stroke=\"" + TEAL + "\" stroke-width=\"1\"/>\n"
+}
+
+# Gridlines at 0.18 opacity. Faint enough that the data reads first, present
+# enough to carry the eye across a wide plot to the axis. This is the one place
+# a value was tuned by looking rather than derived.
+fn grid(xa: sc.Axis, ya: sc.Axis, b: Box) -> Str {
+  let out = "<g stroke=\"" + TEAL + "\" stroke-width=\"1\" opacity=\"0.18\">\n"
+  let i: I64 = 0
+  while i < len(ya.ticks) {
+    let y = py(ya, ya.ticks[i], b)
+    out = out + "<line x1=\"" + str(b.left) + "\" y1=\"" + str(y) + "\" x2=\"" +
+      str(b.left + plot_w(b)) + "\" y2=\"" + str(y) + "\"/>\n"
+    i = i + 1
+  }
+  let j: I64 = 0
+  while j < len(xa.ticks) {
+    let x = px(xa, xa.ticks[j], b)
+    out = out + "<line x1=\"" + str(x) + "\" y1=\"" + str(b.top) + "\" x2=\"" +
+      str(x) + "\" y2=\"" + str(b.top + plot_h(b)) + "\"/>\n"
+    j = j + 1
+  }
+  out + "</g>\n"
+}
+
+fn px(a: sc.Axis, v: F64, b: Box) -> I64 {
+  let span = if a.hi - a.lo > 0.0 { a.hi - a.lo } else { 1.0 }
+  b.left + i64((v - a.lo) / span * f64(plot_w(b)) + 0.5)
+}
+
+fn py(a: sc.Axis, v: F64, b: Box) -> I64 {
+  let span = if a.hi - a.lo > 0.0 { a.hi - a.lo } else { 1.0 }
+  b.top + plot_h(b) - i64((v - a.lo) / span * f64(plot_h(b)) + 0.5)
+}
+
+fn draw_series(s: ch.Series, xa: sc.Axis, ya: sc.Axis, b: Box, id: I64) -> Str {
+  if s.mark == ch.MARK_DOT { return dots(s, xa, ya, b, id) }
+  polyline(s, xa, ya, b, id)
+}
+
+# One `path` per unbroken run. A single path with a move-to at each gap would be
+# shorter, but a run that ends in a NaN has to stop rather than jump, and
+# separate paths make that impossible to get wrong later.
+fn polyline(s: ch.Series, xa: sc.Axis, ya: sc.Axis, b: Box, id: I64) -> Str {
+  let out = ""
+  let d = ""
+  let open = false
+  let i: I64 = 0
+  while i < len(s.ys) {
+    let v = s.ys[i]
+    if f.is_nan(v) || f.is_inf(v) {
+      if open { out = out + path_of(d, id) }
+      d = ""
+      open = false
+    } else {
+      let cmd = if open { " L" } else { "M" }
+      d = d + cmd + str(px(xa, s.xs[i], b)) + " " + str(py(ya, v, b))
+      open = true
+    }
+    i = i + 1
+  }
+  if open { out = out + path_of(d, id) }
+  out
+}
+
+fn path_of(d: Str, id: I64) -> Str =
+  "<path d=\"" + d + "\" fill=\"none\" stroke=\"" + series_colour(id) +
+    "\" stroke-width=\"1.5\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/>\n"
+
+fn dots(s: ch.Series, xa: sc.Axis, ya: sc.Axis, b: Box, id: I64) -> Str {
+  let out = "<g fill=\"" + series_colour(id) + "\">\n"
+  let i: I64 = 0
+  while i < len(s.ys) {
+    let v = s.ys[i]
+    if !f.is_nan(v) && !f.is_inf(v) {
+      out = out + "<circle cx=\"" + str(px(xa, s.xs[i], b)) + "\" cy=\"" +
+        str(py(ya, v, b)) + "\" r=\"2\"/>\n"
+    }
+    i = i + 1
+  }
+  out + "</g>\n"
+}
+
+fn x_labels(a: sc.Axis, b: Box) -> Str {
+  let out = "<g fill=\"" + MINT + "\" font-size=\"10\" text-anchor=\"middle\">\n"
+  let i: I64 = 0
+  while i < len(a.ticks) {
+    out = out + "<text x=\"" + str(px(a, a.ticks[i], b)) + "\" y=\"" +
+      str(b.top + plot_h(b) + 15) + "\">" + escape(sc.tick_label(a, a.ticks[i])) + "</text>\n"
+    i = i + 1
+  }
+  out + "</g>\n"
+}
+
+fn y_labels(a: sc.Axis, b: Box) -> Str {
+  let out = "<g fill=\"" + MINT + "\" font-size=\"10\" text-anchor=\"end\">\n"
+  let i: I64 = 0
+  while i < len(a.ticks) {
+    out = out + "<text x=\"" + str(b.left - 6) + "\" y=\"" +
+      str(py(a, a.ticks[i], b) + 3) + "\">" + escape(sc.tick_label(a, a.ticks[i])) + "</text>\n"
+    i = i + 1
+  }
+  out + "</g>\n"
+}
+
+fn legend(c: ch.Chart, b: Box) -> Str {
+  let out = "<g font-size=\"10\">\n"
+  let x = b.left + 8
+  let i: I64 = 0
+  while i < len(c.series) {
+    out = out + "<rect x=\"" + str(x) + "\" y=\"" + str(b.top + 6) +
+      "\" width=\"10\" height=\"3\" fill=\"" + series_colour(i) + "\"/>\n" +
+      "<text x=\"" + str(x + 15) + "\" y=\"" + str(b.top + 12) + "\" fill=\"" + PALE +
+      "\">" + escape(c.series[i].name) + "</text>\n"
+    x = x + 26 + len(c.series[i].name) * 6
+    i = i + 1
+  }
+  out + "</g>\n"
+}
+
+# ── The other chart types ───────────────────────────────────────────────────
+
+fn bar_svg(title: Str, bs: Arr[bars.Bar], b: Box) -> Str {
+  let vals: Arr[F64] = []
+  let i: I64 = 0
+  while i < len(bs) {
+    vals.push(bs[i].value)
+    i = i + 1
+  }
+  let hi = f.max_f(max_of(vals), 0.0)
+  let lo = f.min_f(min_of(vals), 0.0)
+  let a = sc.axis(lo, hi, 6)
+  let out = header(b) + background(b) +
+    "<text x=\"" + str(b.left) + "\" y=\"18\" fill=\"" + ACCENT + "\" font-size=\"13\">" +
+    escape(title) + "</text>\n"
+  let n = len(bs)
+  let slot = plot_h(b) / f.max_i(n, 1)
+  let j: I64 = 0
+  while j < n {
+    let y = b.top + j * slot + 2
+    let zero = px(a, 0.0, b)
+    let end = px(a, bs[j].value, b)
+    let x0 = f.min_i(zero, end)
+    out = out + "<rect x=\"" + str(x0) + "\" y=\"" + str(y) + "\" width=\"" +
+      str(f.max_i(abs_i(end - zero), 1)) + "\" height=\"" + str(f.max_i(slot - 4, 1)) +
+      "\" fill=\"" + series_colour(j) + "\"/>\n" +
+      "<text x=\"" + str(b.left - 6) + "\" y=\"" + str(y + slot / 2) +
+      "\" fill=\"" + MINT + "\" font-size=\"10\" text-anchor=\"end\">" +
+      escape(bs[j].label) + "</text>\n"
+    j = j + 1
+  }
+  out + "</svg>\n"
+}
+
+fn heatmap_svg(title: Str, m: hm.Matrix, b: Box) -> Str {
+  let r = hm.range_of(m)
+  let out = header(b) + background(b) +
+    "<text x=\"" + str(b.left) + "\" y=\"18\" fill=\"" + ACCENT + "\" font-size=\"13\">" +
+    escape(title) + "</text>\n"
+  let cw = plot_w(b) / f.max_i(m.cols, 1)
+  let chh = plot_h(b) / f.max_i(m.rows, 1)
+  let row: I64 = 0
+  while row < m.rows {
+    let col: I64 = 0
+    while col < m.cols {
+      let t = hm.normalise(hm.at(m, row, col), r)
+      out = out + "<rect x=\"" + str(b.left + col * cw) + "\" y=\"" + str(b.top + row * chh) +
+        "\" width=\"" + str(cw) + "\" height=\"" + str(chh) + "\" fill=\"" + ramp_hex(t) + "\"/>\n"
+      col = col + 1
+    }
+    row = row + 1
+  }
+  out + "</svg>\n"
+}
+
+# The same deep to teal to accent ramp the terminal heatmap uses, evaluated in
+# the same integer channel space so the two agree shade for shade.
+fn ramp_hex(t: I64) -> Str {
+  if t < 500 { mix(18, 51, 44, 79, 183, 155, t * 2) }
+  else { mix(79, 183, 155, 127, 227, 196, (t - 500) * 2) }
+}
+
+fn mix(r0: I64, g0: I64, b0: I64, r1: I64, g1: I64, b1: I64, t: I64) -> Str =
+  "#" + hex2(r0 + (r1 - r0) * t / 1000) + hex2(g0 + (g1 - g0) * t / 1000) + hex2(b0 + (b1 - b0) * t / 1000)
+
+let HEX: Str = "0123456789ABCDEF"
+
+fn hex2(v: I64) -> Str {
+  let x = if v < 0 { 0 } else if v > 255 { 255 } else { v }
+  slice(HEX, x / 16, x / 16 + 1) + slice(HEX, x % 16, x % 16 + 1)
+}
+
+# Five characters, because those five are the whole of what can break an SVG
+# document. A general HTML escaper would also encode characters that are legal
+# here, and a label reading &#39; instead of an apostrophe is a bug in the plot.
+fn escape(s: Str) -> Str {
+  let out = ""
+  let i: I64 = 0
+  while i < len(s) {
+    let c = slice(s, i, i + 1)
+    if c == "&" { out = out + "&amp;" }
+    else if c == "<" { out = out + "&lt;" }
+    else if c == ">" { out = out + "&gt;" }
+    else if c == "\"" { out = out + "&quot;" }
+    else if c == "'" { out = out + "&apos;" }
+    else { out = out + c }
+    i = i + 1
+  }
+  out
+}
+
+fn abs_i(v: I64) -> I64 = if v < 0 { 0 - v } else { v }
+
+fn min_of(xs: Arr[F64]) -> F64 {
+  let m = xs[0]
+  let i: I64 = 1
+  while i < len(xs) {
+    m = f.min_f(m, xs[i])
+    i = i + 1
+  }
+  m
+}
+
+fn max_of(xs: Arr[F64]) -> F64 {
+  let m = xs[0]
+  let i: I64 = 1
+  while i < len(xs) {
+    m = f.max_f(m, xs[i])
+    i = i + 1
+  }
+  m
+}

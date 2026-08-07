@@ -1,0 +1,92 @@
+mode systems
+
+import "harness.tw" as t
+import "../src/canvas.tw" as cv
+
+fn braille_dot_bits_follow_the_unicode_numbering_and_not_row_order() {
+  # Dots 1 to 6 fill the first three rows column by column and dots 7 and 8 were
+  # added underneath later, so the fourth row is bits 6 and 7. Getting this
+  # wrong draws a plot that is subtly scrambled and still looks like a plot.
+  t.equal_i64("top left is bit 0", cv.braille_bit(0, 0), 0)
+  t.equal_i64("second row left is bit 1", cv.braille_bit(0, 1), 1)
+  t.equal_i64("third row left is bit 2", cv.braille_bit(0, 2), 2)
+  t.equal_i64("top right is bit 3", cv.braille_bit(1, 0), 3)
+  t.equal_i64("bottom left is bit 6", cv.braille_bit(0, 3), 6)
+  t.equal_i64("bottom right is bit 7", cv.braille_bit(1, 3), 7)
+}
+
+fn an_empty_cell_is_a_space_and_not_the_blank_braille_pattern() {
+  # U+2800 is a blank that many fonts render at a different advance width from
+  # a space, which makes an empty region of the plot ripple.
+  t.equal_str("an empty braille cell is a space", cv.glyph(cv.RES_BRAILLE, 0), " ")
+  t.equal_str("an empty block cell is a space", cv.glyph(cv.RES_BLOCK, 0), " ")
+  t.equal_str("an empty ascii cell is a space", cv.glyph(cv.RES_ASCII, 0), " ")
+}
+
+fn a_full_cell_renders_at_every_resolution() {
+  t.equal_str("all eight dots is the full braille cell", cv.glyph(cv.RES_BRAILLE, 255), "⣿")
+  t.equal_str("all four quadrants is the full block", cv.glyph(cv.RES_BLOCK, 15), "█")
+  t.equal_str("ascii marks a set cell with a star", cv.glyph(cv.RES_ASCII, 1), "*")
+}
+
+fn one_dot_is_the_expected_braille_character() {
+  let c = cv.new(1, 1, cv.RES_BRAILLE)
+  cv.plot(c, 0, 0, 1)
+  t.equal_str("the top left dot is U+2801", cv.row_glyphs(c, 0)[0], "⠁")
+  cv.plot(c, 1, 3, 1)
+  t.equal_str("adding the bottom right dot gives U+2881", cv.row_glyphs(c, 0)[0], "⢁")
+}
+
+fn plotting_outside_the_canvas_is_dropped_and_not_wrapped() {
+  # A point outside the axis bounds is normal on a live plot with a fixed axis.
+  # Wrapping it would draw it on the opposite edge, where it is indistinguishable
+  # from real data.
+  let c = cv.new(2, 1, cv.RES_BRAILLE)
+  cv.plot(c, 0 - 1, 0, 1)
+  cv.plot(c, 99, 0, 1)
+  cv.plot(c, 0, 99, 1)
+  t.equal_str("the first cell is still empty", cv.row_glyphs(c, 0)[0], " ")
+  t.equal_str("the second cell is still empty", cv.row_glyphs(c, 0)[1], " ")
+}
+
+fn a_line_between_two_points_is_continuous() {
+  let c = cv.new(10, 4, cv.RES_BRAILLE)
+  cv.line(c, 0, 0, 19, 15, 1)
+  # Every column between the endpoints must have at least one dot, or the line
+  # reads as a scatter of points with gaps that were never in the data.
+  let row: I64 = 0
+  let painted: I64 = 0
+  while row < 4 {
+    let g = cv.row_glyphs(c, row)
+    let i: I64 = 0
+    while i < len(g) {
+      if g[i] != " " { painted = painted + 1 }
+      i = i + 1
+    }
+    row = row + 1
+  }
+  t.check("the diagonal touches at least ten cells", painted >= 10)
+}
+
+fn the_last_series_to_paint_a_cell_owns_its_colour() {
+  let c = cv.new(1, 1, cv.RES_BRAILLE)
+  cv.plot(c, 0, 0, 1)
+  cv.plot(c, 1, 1, 2)
+  t.equal_i64("the second series owns the shared cell", cv.row_owners(c, 0)[0], 2)
+}
+
+fn resolution_follows_the_terminal_and_never_leads_it() {
+  t.equal_i64("no unicode means ascii", cv.sub_x_of(cv.RES_ASCII), 1)
+  t.equal_i64("braille is two dots wide", cv.sub_x_of(cv.RES_BRAILLE), 2)
+  t.equal_i64("braille is four dots tall", cv.sub_y_of(cv.RES_BRAILLE), 4)
+}
+
+braille_dot_bits_follow_the_unicode_numbering_and_not_row_order()
+an_empty_cell_is_a_space_and_not_the_blank_braille_pattern()
+a_full_cell_renders_at_every_resolution()
+one_dot_is_the_expected_braille_character()
+plotting_outside_the_canvas_is_dropped_and_not_wrapped()
+a_line_between_two_points_is_continuous()
+the_last_series_to_paint_a_cell_owns_its_colour()
+resolution_follows_the_terminal_and_never_leads_it()
+t.report("canvas")

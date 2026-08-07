@@ -1,0 +1,79 @@
+name: CI
+
+# Nothing here runs twill, because twill cannot run this code yet. What is left
+# is still worth gating on: the things that would quietly rot while the language
+# catches up. Every check below is one that has a right answer today.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Every source file is twill
+        run: |
+          # A file that is not .tw in src/ or tests/ means someone reached for
+          # another language when this one got hard. That is the one failure
+          # this repository exists to not have.
+          bad=$(find src tests examples -type f ! -name '*.tw' || true)
+          if [ -n "$bad" ]; then
+            echo "not twill source:"
+            echo "$bad"
+            exit 1
+          fi
+
+      - name: No trace of the old name
+        run: |
+          # The language was renamed and the old name must not come back through
+          # a copied comment or a stale path. The needle is assembled from two
+          # halves so that this workflow file is not itself a hit, which would
+          # make the check permanently red.
+          old_name="ras""ter"
+          old_ext="\\.""ra\\b"
+          if grep -rIn --exclude-dir=.git -- "$old_name" . ; then
+            echo "the old language name appears above"
+            exit 1
+          fi
+          if grep -rIn --exclude-dir=.git -- "$old_ext" . ; then
+            echo "the old file extension appears above"
+            exit 1
+          fi
+
+      - name: No em dashes
+        run: |
+          dash=$(printf '\xe2\x80\x94')
+          if grep -rIn --exclude-dir=.git -- "$dash" . ; then
+            echo "em dash found above"
+            exit 1
+          fi
+
+      - name: The README still says it does not run
+        run: |
+          # This is the honesty check. The day someone deletes that sentence
+          # without the language having landed, the README starts describing a
+          # library that does not exist.
+          grep -q "weft does not run yet" README.md
+
+      - name: Every test file is wired into the suite
+        run: |
+          # There is no test runner, so a test file is a program and CI cannot
+          # discover it. The next best thing is to check that each one ends by
+          # reporting, which is what makes it exit non-zero on a failure.
+          for f in tests/*_test.tw; do
+            tail -n 1 "$f" | grep -q "t.report(" || { echo "$f does not end in t.report"; exit 1; }
+          done
+
+      - name: The palette is twill's
+        run: |
+          # Five hexes, and no sixth. A plotting library is exactly the kind of
+          # place a colour gets invented at three in the morning.
+          if grep -rIn --include='*.tw' --include='*.svg' -oE '#[0-9A-Fa-f]{6}' src assets \
+              | grep -viE '#(D2F0E4|A8DCCB|7FE3C4|4FB79B|12332C)' ; then
+            echo "colour outside twill's palette above"
+            exit 1
+          fi

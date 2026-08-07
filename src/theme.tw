@@ -1,0 +1,81 @@
+# theme.tw - the palette, and the rule for handing colours to series.
+#
+# The palette is twill's, unchanged: pale, mint, accent, teal, deep. It is
+# repeated here as values rather than imported from twill's `src/cli/theme.tw`
+# because that file is the CLI's roles (heading, body, muted) and a plot's roles
+# are different. The hexes are the same and must stay the same.
+#
+# The rule for a plot, following twill's rule for the CLI: colour carries
+# meaning, never decoration. On a chart the meaning is series identity, so the
+# axes, the frame and the labels are all one quiet colour and only the data is
+# coloured. A chart where the gridlines compete with the data is a chart nobody
+# reads twice.
+
+mode systems
+
+import "../twill_modules/twill/src/term/color.tw" as col
+import "../twill_modules/twill/src/term/ansi.tw" as ansi
+import "../twill_modules/twill/src/term/caps.tw" as cp
+
+fn pale() -> col.Rgb = col.rgb(210, 240, 228)    # D2F0E4
+fn mint() -> col.Rgb = col.rgb(168, 220, 203)    # A8DCCB
+fn accent() -> col.Rgb = col.rgb(127, 227, 196)  # 7FE3C4
+fn teal() -> col.Rgb = col.rgb(79, 183, 155)     # 4FB79B
+fn deep() -> col.Rgb = col.rgb(18, 51, 44)       # 12332C
+
+# The order series are assigned colours in. Accent first because the first
+# series is the one being looked at; pale second because it is the furthest from
+# accent in lightness while staying in the family, which is what separates two
+# lines that cross. Beyond four, colours repeat and the caller is expected to
+# have given up on colour as the distinguisher and reached for a legend.
+fn series_colour(i: I64) -> col.Rgb {
+  let k = i % 4
+  if k == 0 { accent() } else if k == 1 { pale() } else if k == 2 { teal() } else { mint() }
+}
+
+# Axes, ticks, the frame. Teal is the ribbon's shaded face and reads as
+# structure rather than content, which is exactly its job here.
+fn axis_style() -> ansi.Style = ansi.fg(teal())
+
+# Tick labels sit one level quieter than the axis they belong to. Dim rather
+# than a darker colour, because dim degrades to nothing on a plain terminal and
+# a darker mint would become unreadable on a light background.
+fn label_style() -> ansi.Style = ansi.dim(ansi.plain_style())
+
+# The title, and the only place emphasis is spent.
+fn title_style() -> ansi.Style = ansi.fg(accent())
+
+fn series_style(i: I64) -> ansi.Style = ansi.fg(series_colour(i))
+
+# Whether a gradient may be drawn at all. At the 256 tier a gradient quantises
+# to visible bands and reads as a rendering defect, which is twill's stated rule
+# for the spinner's shimmer and applies unchanged to a heatmap ramp. Below
+# truecolour a heatmap uses glyph density instead.
+fn gradients_ok(c: cp.Caps) -> Bool = c.level >= cp.LEVEL_TRUECOLOR
+
+# The heatmap ramp, deep to accent. Deep is otherwise reserved for backgrounds,
+# and this is the one place it earns its keep: a sequential ramp needs a dark
+# end, and inventing a sixth colour for it would put a colour on screen that no
+# other part of the tool uses.
+fn ramp_at(t_x1000: I64) -> col.Rgb = col.ramp3_at(deep(), teal(), accent(), t_x1000, 1000)
+
+# Density glyphs, dark to light, for the tiers where the ramp is not available.
+# Five steps because a reader can order five shades of one glyph family reliably
+# and cannot order eight.
+let DENSITY: Arr[Str] = [" ", "░", "▒", "▓", "█"]
+let DENSITY_ASCII: Arr[Str] = [" ", ".", ":", "+", "#"]
+
+fn density(c: cp.Caps, t_x1000: I64) -> Str {
+  let i = clamp_i(t_x1000 * 5 / 1000, 0, 4)
+  if c.unicode { DENSITY[i] } else { DENSITY_ASCII[i] }
+}
+
+fn clamp_i(v: I64, lo: I64, hi: I64) -> I64 = if v < lo { lo } else if v > hi { hi } else { v }
+
+# The frame characters, degrading with unicode exactly as twill's help screen
+# does. Nothing here is a box: twill draws no borders, and a plot's axes are two
+# rules and a corner, not four sides.
+fn v_rule(c: cp.Caps) -> Str = if c.unicode { "│" } else { "|" }
+fn h_rule(c: cp.Caps) -> Str = if c.unicode { "─" } else { "-" }
+fn corner(c: cp.Caps) -> Str = if c.unicode { "└" } else { "+" }
+fn tick_mark(c: cp.Caps) -> Str = if c.unicode { "┼" } else { "+" }

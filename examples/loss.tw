@@ -1,0 +1,40 @@
+# The case weft is built for: watch a loss curve while the model trains.
+#
+# The plot is created once, fed one number per step, and closed. Everything
+# else, the axis that holds still, the repaint that sends no redundant bytes,
+# the downsampling of a long run, and the fallback to one log line per fifty
+# steps when there is no terminal, happens without the training loop knowing.
+
+mode systems
+
+import "../twill_modules/twill/src/term/caps.tw" as cp
+import "../src/live.tw" as live
+import "../src/chart.tw" as ch
+import "../src/svg.tw" as svg
+
+fn main() {
+  let caps = cp.detect()
+  let plot = live.new(caps, "training loss", 72, 12)
+
+  let step: I64 = 0
+  while step < 4000 {
+    let loss = train_one_step(step)
+    write_out(live.push(plot, loss, now_ms()))
+    step = step + 1
+  }
+  write_out(live.close(plot))
+
+  # The same series, off the terminal. The SVG uses the axis the terminal
+  # settled on, so the file and the screen show the same range.
+  let c = ch.chart("training loss", 72, 12)
+  c.x_label = "step"
+  c.series.push(ch.series("loss", plot.xs, plot.ys, ch.MARK_LINE))
+  ch.fix_y(c, plot.y.axis)
+  write_file("loss.svg", svg.render(c, svg.box(720, 300)))
+}
+
+# Stands in for a real step. A decaying loss with the wobble that makes a naive
+# autoscaler oscillate, which is the behaviour worth demonstrating.
+fn train_one_step(step: I64) -> F64 = 0.06 + 4.5 / (1.0 + f64(step) * 0.09)
+
+main()

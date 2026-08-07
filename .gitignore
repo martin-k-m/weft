@@ -1,0 +1,4 @@
+# spool vendors dependencies here. Committing them would put twill's whole
+# source in this repository, which is what spool.lock exists to avoid.
+twill_modules/
+*.svg.tmp
