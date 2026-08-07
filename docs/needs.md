@@ -91,19 +91,21 @@ whose plots cannot leave the process is not finished.
 
 ## Painful: written around, badly
 
-### 6. Bitwise operators that do not collide with the logical ones
+### 6. The bitwise operators, written down
 
-**Needs:** a spelling for bitwise or, and, shift that is not `or` and `and`
+**Needs:** the language guide to state that `and`, `or`, `xor`, `shl` and `shr`
+on two `I64` values are bitwise, and what `shr` does to a negative one
 **Used by:** `src/canvas.tw` (`set_bit`, `bit_set`)
 **Status:** section 1.2 lists "Bitwise `and or xor shl shr not` on I64", which
-are the same words as the short-circuiting logical operators.
+are the same words as the short-circuiting logical operators, and the guide does
+not cover them at all. spool's `src/sha256.tw` uses them as bitwise throughout,
+so the intent is clear from the sources and from nowhere else.
 
-Setting one bit in a dot mask is written as `mask + pow2(bit)` guarded by a test,
-and reading one as `(mask / pow2(bit)) % 2 == 1`, rather than depending on the
-operand types to disambiguate an overloaded keyword. That is a loop and a divide
-where the hardware has an instruction, on the hottest path in the library. A
-distinct spelling, `bitor` and `bitand` or the C operators, would remove all of
-it.
+Setting one bit in a dot mask is therefore written as `mask + pow2(bit)` guarded
+by a test, and reading one as `(mask / pow2(bit)) % 2 == 1`, which is a loop and
+a divide where the hardware has an instruction, on the hottest path in the
+library. That is a lot of caution to pay for an unwritten rule. Either the guide
+says it, or the operators get distinct spellings; weft does not mind which.
 
 ### 7. String building is quadratic
 
