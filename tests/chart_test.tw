@@ -159,7 +159,24 @@ fn split_lines(s: Str) -> Arr[Str] {
   out
 }
 
+fn a_framed_chart_is_drawn_inside_a_border() {
+  let out = ch.render_framed(sample(), plain_caps())
+  # Plain caps cannot draw box glyphs, so the frame degrades to ASCII: the
+  # corners are the proof the panel was drawn at all.
+  t.check("the panel has ascii corners", index_of(out, "+") >= 0)
+  t.check("and vertical edges down its sides", index_of(out, "|") >= 0)
+}
+
+fn a_framed_empty_chart_frames_the_no_data_message() {
+  let c = ch.chart("nothing", 40, 6)
+  let out = ch.render_framed(c, plain_caps())
+  t.check("the empty case is still named", index_of(out, "no data") >= 0)
+  t.check("and it is still inside a frame", index_of(out, "+") >= 0)
+}
+
 a_plain_terminal_gets_no_escape_sequences_at_all()
+a_framed_chart_is_drawn_inside_a_border()
+a_framed_empty_chart_frames_the_no_data_message()
 no_rendered_line_is_wider_than_the_terminal()
 the_plot_has_the_number_of_rows_it_was_asked_for()
 an_empty_chart_says_so_instead_of_drawing_an_empty_frame()

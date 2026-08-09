@@ -16,6 +16,7 @@ mode systems
 import "../twill_modules/twill/src/term/caps.tw" as cp
 import "../twill_modules/twill/src/term/ansi.tw" as ansi
 import "../twill_modules/twill/src/term/width.tw" as w
+import "../twill_modules/twill/src/cli/box.tw" as box
 import "canvas.tw" as cv
 import "scale.tw" as sc
 import "theme.tw" as th
@@ -170,6 +171,54 @@ fn render(c: Chart, caps: cp.Caps) -> Str {
     out = out + legend(c, caps)
   }
   out
+}
+
+# The same chart inside a rounded box, with the title set into the top edge
+# rather than sitting above the plot. It is the presentation form: a report or a
+# dashboard cell wants the frame, a plot piped into another tool does not, so it
+# is a separate call rather than a flag on `render`. The plot is drawn to the
+# chart's own width, so a chart meant to be framed should be built four columns
+# narrower than the terminal to leave room for the border; anything wider the box
+# truncates rather than wraps.
+fn render_framed(c: Chart, caps: cp.Caps) -> Str {
+  let b = bounds_of(c.series)
+  let title = if len(c.title) > 0 {
+    ansi.paint(caps, th.title_style(), c.title)
+  } else {
+    ""
+  }
+  if !b.any {
+    let empty: Arr[Str] = arr()
+    push(empty, ansi.paint(caps, th.label_style(), "(no data)"))
+    return box.panel(caps, empty, title, th.teal(), box.rounded()) + "\n"
+  }
+  let lay = layout(c, b)
+  let canvas = draw(c, lay, caps)
+  let body: Arr[Str] = arr()
+  push_lines(body, plot_rows(c, lay, canvas, caps))
+  push_lines(body, x_axis_rows(c, lay, caps))
+  if len(c.series) > 1 {
+    push_lines(body, legend(c, caps))
+  }
+  box.panel(caps, body, title, th.teal(), box.rounded()) + "\n"
+}
+
+# Split a rendered block, whose lines are terminated by newlines, into the array
+# of lines a box wants. The block ends with a trailing newline, and the empty
+# tail that would leave is dropped.
+fn push_lines(body: Arr[Str], block: Str) {
+  let start: I64 = 0
+  let i: I64 = 0
+  while i < len(block) {
+    if block[i] == 10 {
+      push(body, block[start:i])
+      start = i + 1
+    }
+    i = i + 1
+  }
+  if start < len(block) {
+    push(body, block[start:len(block)])
+  }
 }
 
 fn draw(c: Chart, lay: Layout, caps: cp.Caps) -> cv.Canvas {
