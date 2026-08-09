@@ -110,6 +110,11 @@ Both calls take the same `Chart`. The SVG and the terminal derive their scale
 from one `Axis`, so a plot in a pull request and a plot on a screen never show
 different ranges of the same data.
 
+`ch.render_framed(c, cp.detect())` is the same terminal plot inside a rounded
+panel, the title set into the top border rather than printed above the plot. It
+degrades to an ASCII frame where the terminal cannot draw box glyphs, and reads
+as one object when a report stacks several plots down a page.
+
 ## What is actually hard here
 
 **Ticks.** Divide a range by six and the labels come out 0.037, 0.074, 0.111,
