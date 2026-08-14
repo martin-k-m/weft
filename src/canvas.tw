@@ -17,7 +17,7 @@
 
 mode systems
 
-import "../twill_modules/twill/src/term/caps.tw" as cp
+import "std/term/caps" as cp
 
 let RES_BRAILLE: I64 = 0   # 2 x 4 dots per cell
 let RES_BLOCK: I64 = 1     # 2 x 2 quadrants per cell

@@ -24,9 +24,9 @@
 
 mode systems
 
-import "../twill_modules/twill/src/term/caps.tw" as cp
-import "../twill_modules/twill/src/term/frame.tw" as fr
-import "../twill_modules/twill/src/term/ansi.tw" as ansi
+import "std/term/caps" as cp
+import "std/term/frame" as fr
+import "std/term/ansi" as ansi
 import "canvas.tw" as cv
 import "scale.tw" as sc
 import "chart.tw" as ch

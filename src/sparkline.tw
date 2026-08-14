@@ -11,8 +11,8 @@
 
 mode systems
 
-import "../twill_modules/twill/src/term/caps.tw" as cp
-import "../twill_modules/twill/src/term/ansi.tw" as ansi
+import "std/term/caps" as cp
+import "std/term/ansi" as ansi
 import "theme.tw" as th
 import "fmtnum.tw" as f
 

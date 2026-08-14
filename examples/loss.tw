@@ -7,7 +7,7 @@
 
 mode systems
 
-import "../twill_modules/twill/src/term/caps.tw" as cp
+import "std/term/caps" as cp
 import "../src/live.tw" as live
 import "../src/chart.tw" as ch
 import "../src/svg.tw" as svg

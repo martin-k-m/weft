@@ -13,10 +13,10 @@
 
 mode systems
 
-import "../twill_modules/twill/src/term/caps.tw" as cp
-import "../twill_modules/twill/src/term/ansi.tw" as ansi
-import "../twill_modules/twill/src/term/width.tw" as w
-import "../twill_modules/twill/src/cli/box.tw" as box
+import "std/term/caps" as cp
+import "std/term/ansi" as ansi
+import "std/term/width" as w
+import "std/term/box" as box
 import "canvas.tw" as cv
 import "scale.tw" as sc
 import "theme.tw" as th

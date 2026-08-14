@@ -40,7 +40,7 @@ fn fixed(v: F64, places: I64) -> Str {
   let scale = pow10(places)
   # Round half away from zero, which is what a reader expects to see on an axis.
   let units = i64(x * scale + 0.5)
-  let whole = units / int_pow10(places)
+  let whole = units // int_pow10(places)
   let frac = units % int_pow10(places)
   let head = str(whole)
   let out = if places <= 0 { head } else { head + "." + pad_zeros(frac, places) }

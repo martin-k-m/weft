@@ -13,9 +13,9 @@
 
 mode systems
 
-import "../twill_modules/twill/src/term/color.tw" as col
-import "../twill_modules/twill/src/term/ansi.tw" as ansi
-import "../twill_modules/twill/src/term/caps.tw" as cp
+import "std/term/color" as col
+import "std/term/ansi" as ansi
+import "std/term/caps" as cp
 
 fn pale() -> col.Rgb = col.rgb(210, 240, 228)    # D2F0E4
 fn mint() -> col.Rgb = col.rgb(168, 220, 203)    # A8DCCB

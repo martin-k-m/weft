@@ -3,7 +3,7 @@ mode systems
 import "harness.tw" as t
 import "../src/live.tw" as live
 import "../src/scale.tw" as sc
-import "../twill_modules/twill/src/term/caps.tw" as cp
+import "std/term/caps" as cp
 
 fn tty_caps() -> cp.Caps = cp.Caps {
   level: cp.LEVEL_TRUECOLOR, tty: true, width: 80, height: 24,

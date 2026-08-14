@@ -7,8 +7,8 @@ import "../src/canvas.tw" as cv
 import "../src/bars.tw" as bars
 import "../src/sparkline.tw" as spark
 import "../src/fmtnum.tw" as f
-import "../twill_modules/twill/src/term/caps.tw" as cp
-import "../twill_modules/twill/src/term/width.tw" as w
+import "std/term/caps" as cp
+import "std/term/width" as w
 
 # Capabilities are constructed rather than detected, because a test that reads
 # the environment tests the machine it runs on. The three tiers below are the
