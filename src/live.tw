@@ -93,8 +93,8 @@ fn push(l: Live, value: F64, now_ms: I64) -> Str {
     # it. It is stored as its own point, `chart.tw` breaks the line there, and
     # the reader sees exactly which step it happened on.
     flush_bucket(l)
-    l.xs.push(f64(l.steps))
-    l.ys.push(value)
+    arr_push(l.xs, f64(l.steps))
+    arr_push(l.ys, value)
   } else {
     l.bucket_sum = l.bucket_sum + value
     l.bucket_n = l.bucket_n + 1
@@ -109,8 +109,10 @@ fn push(l: Live, value: F64, now_ms: I64) -> Str {
 
 fn flush_bucket(l: Live) {
   if l.bucket_n == 0 { return }
-  l.xs.push(f64(l.steps) - f64(l.bucket_n) / 2.0)
-  l.ys.push(l.bucket_sum / f64(l.bucket_n))
+  # This module defines its own `push`, which shadows the container one, so the
+  # appends here name `arr_push` explicitly rather than going through `xs.push`.
+  arr_push(l.xs, f64(l.steps) - f64(l.bucket_n) / 2.0)
+  arr_push(l.ys, l.bucket_sum / f64(l.bucket_n))
   l.bucket_sum = 0.0
   l.bucket_n = 0
   if len(l.ys) > capacity(l) { compact(l) }
@@ -130,13 +132,13 @@ fn compact(l: Live) {
     let a = l.ys[i]
     let b = l.ys[i + 1]
     let merged = if f.is_nan(a) || f.is_nan(b) { nan_of(a, b) } else { (a + b) / 2.0 }
-    xs.push((l.xs[i] + l.xs[i + 1]) / 2.0)
-    ys.push(merged)
+    arr_push(xs, (l.xs[i] + l.xs[i + 1]) / 2.0)
+    arr_push(ys, merged)
     i = i + 2
   }
   if i < len(l.ys) {
-    xs.push(l.xs[i])
-    ys.push(l.ys[i])
+    arr_push(xs, l.xs[i])
+    arr_push(ys, l.ys[i])
   }
   l.xs = xs
   l.ys = ys
@@ -153,7 +155,7 @@ fn body(l: Live) -> Str {
   let c = ch.chart(l.title, l.cols, l.rows)
   c.log_y = l.log_y
   c.x_label = "step"
-  c.series.push(ch.series("loss", l.xs, l.ys, ch.MARK_LINE))
+  arr_push(c.series, ch.series("loss", l.xs, l.ys, ch.MARK_LINE))
   # The settled axis is imposed rather than recomputed. If the chart derived it
   # from the data again, every frame would get a tight axis and the hysteresis
   # above would have bought nothing.
@@ -177,7 +179,7 @@ fn drawable(l: Live) -> Arr[F64] {
   let i: I64 = 0
   while i < len(l.ys) {
     let v = l.ys[i]
-    if !f.is_nan(v) && !f.is_inf(v) && (!l.log_y || v > 0.0) { out.push(v) }
+    if !f.is_nan(v) && !f.is_inf(v) && (!l.log_y || v > 0.0) { arr_push(out, v) }
     i = i + 1
   }
   out

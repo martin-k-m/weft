@@ -79,7 +79,7 @@ fn plot(cv: Canvas, x: I64, y: I64, series: I64) {
   # alternative, growing the canvas, would change the scale mid-frame.
   if x < 0 || y < 0 { return }
   if x >= width_dots(cv) || y >= height_dots(cv) { return }
-  let cell = (y / cv.sub_y) * cv.cols + (x / cv.sub_x)
+  let cell = (y // cv.sub_y) * cv.cols + (x // cv.sub_x)
   let bit = bit_index(cv.res, x % cv.sub_x, y % cv.sub_y)
   cv.dots[cell] = set_bit(cv.dots[cell], bit)
   cv.owner[cell] = series
@@ -163,7 +163,7 @@ fn glyph(res: I64, mask: I64) -> Str {
 # U+2800 plus the dot mask, encoded as UTF-8 by hand. The block is
 # U+2800..U+28FF, so the encoding is always three bytes and the arithmetic below
 # is exact rather than a general encoder narrowed to a case.
-fn braille(mask: I64) -> Str = chr(226) + chr(160 + mask / 64) + chr(128 + mask % 64)
+fn braille(mask: I64) -> Str = chr(226) + chr(160 + mask // 64) + chr(128 + mask % 64)
 
 # Braille dot numbering is column-major and the last row was added later, so the
 # bit for (col, row) is not row * 2 + col and never will be. Written as a table
@@ -197,7 +197,7 @@ fn quadrant(mask: I64) -> Str = QUADRANTS[mask % 16]
 
 fn set_bit(mask: I64, bit: I64) -> I64 = if bit_set(mask, bit) { mask } else { mask + pow2(bit) }
 
-fn bit_set(mask: I64, bit: I64) -> Bool = (mask / pow2(bit)) % 2 == 1
+fn bit_set(mask: I64, bit: I64) -> Bool = (mask // pow2(bit)) % 2 == 1
 
 fn pow2(bit: I64) -> I64 {
   let out: I64 = 1

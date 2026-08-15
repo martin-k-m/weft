@@ -49,7 +49,10 @@ fn a_gap_in_the_data_breaks_the_path_rather_than_bridging_it() {
   let ys: Arr[F64] = [1.0, 2.0, 0.0 / 0.0, 4.0, 5.0]
   c.series.push(ch.series_y("s", ys, ch.MARK_LINE))
   let out = svg.render(c, svg.box(400, 200))
-  t.equal_i64("two runs became two paths", count(out, "<path d=\"M"), 2)
+  # Counted by the join style, which only a series path carries. The axes are
+  # drawn as a path too, so counting `<path d="M` counted three and read as the
+  # gap having been bridged into an extra run.
+  t.equal_i64("two runs became two paths", count(out, "stroke-linejoin"), 2)
 }
 
 fn text_is_escaped_so_a_label_cannot_break_the_document() {

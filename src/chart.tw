@@ -127,8 +127,8 @@ struct Layout {
 # Tick counts are derived from the space available rather than fixed. Six ticks
 # on a twelve-row plot puts a label on every other row and the labels stop being
 # a scale and start being a wall.
-fn tick_target_rows(rows: I64) -> I64 = clamp_i(rows / 3, 2, 8)
-fn tick_target_cols(cols: I64) -> I64 = clamp_i(cols / 12, 2, 8)
+fn tick_target_rows(rows: I64) -> I64 = clamp_i(rows // 3, 2, 8)
+fn tick_target_cols(cols: I64) -> I64 = clamp_i(cols // 12, 2, 8)
 
 fn layout(c: Chart, b: Bounds) -> Layout {
   let y = if c.y_fixed { c.y_axis }
@@ -296,7 +296,7 @@ fn row_label(lay: Layout, rows: I64, row: I64, canvas: cv.Canvas) -> Str {
   while i < len(lay.y_axis.ticks) {
     let v = lay.y_axis.ticks[i]
     let dot = flip(py, sc.to_cell(py, v))
-    if dot / sub == row { return sc.tick_label(lay.y_axis, v) }
+    if dot // sub == row { return sc.tick_label(lay.y_axis, v) }
     i = i + 1
   }
   ""
@@ -346,7 +346,7 @@ fn x_tick_row(lay: Layout) -> Str {
   while i < len(lay.x_axis.ticks) {
     let v = lay.x_axis.ticks[i]
     let label = sc.tick_label(lay.x_axis, v)
-    let at = sc.to_cell(px, v) - w.display_width(label) / 2
+    let at = sc.to_cell(px, v) - w.display_width(label) // 2
     let start = if at < 0 { 0 } else { at }
     if start >= len(out) + 1 || len(out) == 0 {
       out = out + w.spaces(start - w.display_width(out)) + label
