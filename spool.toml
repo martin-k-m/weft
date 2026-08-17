@@ -8,4 +8,4 @@ entry = "src/chart.tw"
 # vendored to be importable at all. See the note in README.md and the entry in
 # docs/needs.md.
 [dependencies]
-twill = { version = "^1.5.0", git = "https://github.com/martin-k-m/twill" }
+twill = { version = "^1.5.0", git = "https://github.com/twill-lang/twill" }

@@ -1,11 +1,11 @@
 <p align="center">
-  <img alt="twill" src="https://raw.githubusercontent.com/martin-k-m/twill/main/assets/twill-mark.png" width="96">
+  <img alt="twill" src="https://raw.githubusercontent.com/twill-lang/twill/main/assets/twill-mark.png" width="96">
 </p>
 
 <h1 align="center">weft</h1>
 
 <p align="center">
-  <b>Plots for <a href="https://github.com/martin-k-m/twill">twill</a>: in the terminal, and out of it.</b><br>
+  <b>Plots for <a href="https://github.com/twill-lang/twill">twill</a>: in the terminal, and out of it.</b><br>
   Written in twill.
 </p>
 
@@ -207,9 +207,9 @@ examples/       loss.tw, the training loop above
 
 ## The sibling repositories
 
-- [twill](https://github.com/martin-k-m/twill), the language.
-- [spool](https://github.com/martin-k-m/spool), the package manager.
-- [warp](https://github.com/martin-k-m/warp), data pipelines and dataset
+- [twill](https://github.com/twill-lang/twill), the language.
+- [spool](https://github.com/twill-lang/spool), the package manager.
+- [warp](https://github.com/twill-lang/warp), data pipelines and dataset
   loaders. warp loads it, weft draws it.
 
 ## Licence
