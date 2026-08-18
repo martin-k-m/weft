@@ -19,7 +19,11 @@ fn main() {
   let step: I64 = 0
   while step < 4000 {
     let loss = train_one_step(step)
-    write_out(live.push(plot, loss, now_ms()))
+    # `push_now` reads the monotonic clock itself. The `push` underneath it
+    # still takes the time as a parameter, for the loop that already knows it
+    # and for the tests, which cannot assert anything about the frame limiter
+    # unless they choose the time.
+    write_out(live.push_now(plot, loss))
     step = step + 1
   }
   write_out(live.close(plot))
@@ -28,7 +32,7 @@ fn main() {
   # settled on, so the file and the screen show the same range.
   let c = ch.chart("training loss", 72, 12)
   c.x_label = "step"
-  c.series.push(ch.series("loss", plot.xs, plot.ys, ch.MARK_LINE))
+  c.series.push(ch.series("loss", plot.xs, plot.ys, ch.Line))
   ch.fix_y(c, plot.y.axis)
   write_file("loss.svg", svg.render(c, svg.box(720, 300)))
 }

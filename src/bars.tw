@@ -164,7 +164,7 @@ fn hist_chart(title: Str, h: Hist, cols: I64, rows: I64) -> ch.Chart {
     i = i + 1
   }
   let c = ch.chart(title, cols, rows)
-  c.series.push(ch.series("count", xs, ys, ch.MARK_LINE))
+  c.series.push(ch.series("count", xs, ys, ch.Line))
   c
 }
 

@@ -14,7 +14,7 @@ fn sample() -> ch.Chart {
     ys.push(4.0 / (1.0 + f64(i) * 0.2))
     i = i + 1
   }
-  c.series.push(ch.series_y("train", ys, ch.MARK_LINE))
+  c.series.push(ch.series_y("train", ys, ch.Line))
   c
 }
 
@@ -47,7 +47,7 @@ fn the_terminal_and_the_svg_scale_the_same_data_the_same_way() {
 fn a_gap_in_the_data_breaks_the_path_rather_than_bridging_it() {
   let c = ch.chart("with a gap", 60, 8)
   let ys: Arr[F64] = [1.0, 2.0, 0.0 / 0.0, 4.0, 5.0]
-  c.series.push(ch.series_y("s", ys, ch.MARK_LINE))
+  c.series.push(ch.series_y("s", ys, ch.Line))
   let out = svg.render(c, svg.box(400, 200))
   # Counted by the join style, which only a series path carries. The axes are
   # drawn as a path too, so counting `<path d="M` counted three and read as the

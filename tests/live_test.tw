@@ -15,18 +15,36 @@ fn pipe_caps() -> cp.Caps = cp.Caps {
   hyperlinks: false, unicode: false, animate: false,
 }
 
-fn feed(l: live.Live, n: I64) {
+# A decaying loss with a wobble, which is the shape that makes a naive
+# autoscaler oscillate.
+fn value_at(i: I64) -> F64 = 4.0 / (1.0 + f64(i) * 0.05) + f64(i % 7) * 0.01
+
+# The step spacing is a parameter because it decides how often the frame limiter
+# is due, and that is the whole cost of this file.
+#
+# It used to be a fixed 40 ms, which is wider than the limiter's 33 ms interval,
+# so every single push repainted a full 80x24 truecolor chart. The three history
+# tests below feed 20,000 and 5,000 and 5,000 points between them, so the suite
+# spent thirty thousand repaints, about 29 ms each, to assert facts about a ring
+# buffer. That is where the twenty minutes went.
+#
+# The history tests now feed at one instant: the limiter is due once and every
+# push after it costs an add and a compare, which is exactly what `push`
+# promises and is therefore still a real exercise of `push`. The limiter and the
+# repaint have their own test, at a size where repainting per frame is cheap.
+fn feed_at(l: live.Live, n: I64, ms_per_step: I64) -> I64 {
+  let painted: I64 = 0
   let i: I64 = 0
   while i < n {
-    # A decaying loss with a wobble, which is the shape that makes a naive
-    # autoscaler oscillate.
-    let v = 4.0 / (1.0 + f64(i) * 0.05) + f64(i % 7) * 0.01
-    live.push(l, v, f64_ms(i))
+    if len(live.push(l, value_at(i), i * ms_per_step)) > 0 { painted = painted + 1 }
     i = i + 1
   }
+  painted
 }
 
-fn f64_ms(i: I64) -> I64 = i * 40
+fn feed(l: live.Live, n: I64) {
+  let ignored = feed_at(l, n, 0)
+}
 
 fn the_history_never_grows_past_its_capacity() {
   let l = live.new(tty_caps(), "loss", 60, 8)
@@ -83,9 +101,32 @@ fn without_a_tty_nothing_is_repainted_and_the_log_is_periodic() {
   t.equal_i64("one line per LOG_EVERY steps", emitted, 3)
 }
 
+# The limiter, from both sides, and the only test here that repaints in bulk.
+# Forty frames rather than thirty thousand: what is being asserted is a compare
+# against `next_due`, and it is as true at forty as it is at thirty thousand.
+fn the_frame_limiter_repaints_on_its_own_interval_and_not_per_push() {
+  # 40 ms a step is wider than the frame's 33 ms interval, so a repaint is due
+  # on every push.
+  let fast = live.new(tty_caps(), "loss", 60, 8)
+  let painted_fast = feed_at(fast, 40, 40)
+  # 4 ms a step is far narrower, so the limiter absorbs most of them.
+  let slow = live.new(tty_caps(), "loss", 60, 8)
+  let painted_slow = feed_at(slow, 40, 4)
+  t.check("a step wider than the interval repaints on most pushes", painted_fast > 30)
+  t.check("a step narrower than it repaints far less often", painted_slow < 10)
+  t.check("but it does still repaint", painted_slow > 0)
+  # The repaints were real ones, not a limiter returning empty strings: both
+  # runs saw the same 40 points and must agree about them.
+  t.equal_i64("both runs counted every step", fast.steps, slow.steps)
+  t.near("and agree on the best value", fast.best, slow.best, 1.0e-12)
+}
+
 fn a_repaint_carries_the_settled_axis_and_not_a_fresh_one() {
   let l = live.new(tty_caps(), "loss", 60, 8)
-  feed(l, 200)
+  # 10 ms a step, so the axis settles across roughly sixty frames rather than
+  # two hundred. The hysteresis in `scale.settle` is counted in frames, so this
+  # still gives it many more than it needs to have stopped moving.
+  let painted = feed_at(l, 200, 10)
   let before = l.y.axis.hi
   live.push(l, 0.01, 100000)
   t.near("one small point did not rescale the axis", l.y.axis.hi, before, 1.0e-9)
@@ -99,5 +140,6 @@ compaction_keeps_the_beginning_of_the_run_on_screen()
 a_nan_is_kept_as_its_own_point_and_not_averaged_away()
 the_best_value_is_the_minimum_seen_and_not_the_latest()
 without_a_tty_nothing_is_repainted_and_the_log_is_periodic()
+the_frame_limiter_repaints_on_its_own_interval_and_not_per_push()
 a_repaint_carries_the_settled_axis_and_not_a_fresh_one()
 t.report("live")

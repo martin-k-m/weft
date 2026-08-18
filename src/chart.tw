@@ -22,22 +22,25 @@ import "scale.tw" as sc
 import "theme.tw" as th
 import "fmtnum.tw" as f
 
-let MARK_LINE: I64 = 0
-let MARK_DOT: I64 = 1
+# How a series is drawn. Two cases is few enough that an integer tag was never
+# painful, but it is also the enum whose third case is most likely -- a stepped
+# mark for a staircase plot -- and `svg.tw` dispatches on it too. As an enum,
+# adding one names both dispatch sites at check time.
+enum Mark { Line, Dot }
 
 struct Series {
   name: Str,
   xs: Arr[F64],
   ys: Arr[F64],
-  mark: I64,
+  mark: Mark,
 }
 
-fn series(name: Str, xs: Arr[F64], ys: Arr[F64], mark: I64) -> Series =
+fn series(name: Str, xs: Arr[F64], ys: Arr[F64], mark: Mark) -> Series =
   Series { name: name, xs: xs, ys: ys, mark: mark }
 
 # ys against their own index, which is the common case and the one people write
 # by hand when the library does not provide it.
-fn series_y(name: Str, ys: Arr[F64], mark: I64) -> Series {
+fn series_y(name: Str, ys: Arr[F64], mark: Mark) -> Series {
   let xs: Arr[F64] = []
   let i: I64 = 0
   while i < len(ys) {
@@ -243,7 +246,7 @@ fn draw_series(canvas: cv.Canvas, s: Series, px: sc.Proj, py: sc.Proj, id: I64, 
     if usable {
       let x = sc.to_cell(px, s.xs[j])
       let y = flip(py, project_y(py, yv, log_y))
-      if s.mark == MARK_LINE && prev_x >= 0 {
+      if s.mark == Mark.Line && prev_x >= 0 {
         cv.line(canvas, prev_x, prev_y, x, y, id)
       } else {
         cv.plot(canvas, x, y, id)
@@ -302,6 +305,26 @@ fn row_label(lay: Layout, rows: I64, row: I64, canvas: cv.Canvas) -> Str {
   ""
 }
 
+# This is the innermost loop in the library and it builds a string with `+`,
+# which docs/needs.md entry 7 says is the thing to replace with a `Bytes`
+# builder. It was replaced, measured with `mono_ns` against an 80x24 truecolor
+# frame, and put back, so that the next person does not spend the afternoon
+# again:
+#
+#   render, Str concatenation      29 ms per frame
+#   render, bytes_new + push_str   38 ms per frame
+#
+# `push_str` in std/text is an interpreted loop calling `bytes_push` once per
+# byte, and `+` on a `Str` is one copy in the runtime. At a four-kilobyte frame
+# the quadratic term is a few megabytes of memcpy, which the runtime does not
+# notice, and the linear term is four thousand interpreter steps, which it very
+# much does. The crossover is far above any frame a terminal can show.
+#
+# The 29 ms is real and it is not in the concatenation: of it, about 7 ms is
+# `draw` walking Bresenham through `pow2`, about 5 ms is `row_glyphs` and
+# `row_owners` building two arrays per row, and about 10 ms is `row_label`
+# recomputing the projection and rescanning every tick once per row. Those are
+# where a repaint gets cheaper, and none of them is a string builder.
 fn cells(canvas: cv.Canvas, row: I64, caps: cp.Caps) -> Str {
   let glyphs = cv.row_glyphs(canvas, row)
   let owners = cv.row_owners(canvas, row)

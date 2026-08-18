@@ -107,6 +107,20 @@ fn push(l: Live, value: F64, now_ms: I64) -> Str {
   fr.paint(l.frame, body(l), now_ms)
 }
 
+# The same thing against the real clock, for the caller that has no clock of its
+# own. `push` keeps its `now_ms` parameter rather than reading the clock itself
+# for two reasons, and neither is squeamishness about side effects: a training
+# loop that already knows the wall time should not pay for a second syscall per
+# step, and a test that cannot choose the time cannot assert anything about the
+# frame limiter, which is the part of this file most worth asserting.
+#
+# `mono_ns` and not `clock_now_ms`. The limiter is asking how long since the
+# last repaint, which is a duration, and the wall clock can step backwards over
+# an NTP correction or a daylight-saving change. A backwards step there freezes
+# the plot for as long as the correction was large, in the middle of a run that
+# is meant to be on screen for six hours.
+fn push_now(l: Live, value: F64) -> Str = push(l, value, mono_ns() / 1000000)
+
 fn flush_bucket(l: Live) {
   if l.bucket_n == 0 { return }
   # This module defines its own `push`, which shadows the container one, so the
@@ -155,7 +169,7 @@ fn body(l: Live) -> Str {
   let c = ch.chart(l.title, l.cols, l.rows)
   c.log_y = l.log_y
   c.x_label = "step"
-  arr_push(c.series, ch.series("loss", l.xs, l.ys, ch.MARK_LINE))
+  arr_push(c.series, ch.series("loss", l.xs, l.ys, ch.Line))
   # The settled axis is imposed rather than recomputed. If the chart derived it
   # from the data again, every frame would get a tight axis and the hysteresis
   # above would have bought nothing.

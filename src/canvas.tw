@@ -19,14 +19,24 @@ mode systems
 
 import "std/term/caps" as cp
 
-let RES_BRAILLE: I64 = 0   # 2 x 4 dots per cell
-let RES_BLOCK: I64 = 1     # 2 x 2 quadrants per cell
-let RES_ASCII: I64 = 2     # 1 x 1, the cell itself
+# The three subcell resolutions, as a type. Named `Resolution` and not `Res`
+# because `Res[T, E]` is the built-in failure type and a second `Res` in scope
+# would be read wrong by every person before it was read wrong by the checker.
+#
+#   Braille  2 x 4 dots per cell
+#   Block    2 x 2 quadrants per cell
+#   Ascii    1 x 1, the cell itself
+#
+# Five functions here dispatch on it and every one of them is now an exhaustive
+# match. A fourth rung on the ladder -- sextants, which some fonts have -- is a
+# check-time error in each of the five instead of silently falling through to
+# the ASCII branch, which is what the `else` in each of them used to do.
+enum Resolution { Braille, Block, Ascii }
 
 struct Canvas {
   cols: I64,
   rows: I64,
-  res: I64,
+  res: Resolution,
   sub_x: I64,
   sub_y: I64,
   # One bitmask per cell. Braille uses all eight bits, blocks use four, ASCII
@@ -43,9 +53,9 @@ struct Canvas {
 # terminals that have blocks but not braille, because every font that ships
 # quadrant blocks has shipped braille for a decade and guessing wrong costs a
 # screen of tofu.
-fn resolution_for(c: cp.Caps) -> I64 = if c.unicode { RES_BRAILLE } else { RES_ASCII }
+fn resolution_for(c: cp.Caps) -> Resolution = if c.unicode { Resolution.Braille } else { Resolution.Ascii }
 
-fn new(cols: I64, rows: I64, res: I64) -> Canvas {
+fn new(cols: I64, rows: I64, res: Resolution) -> Canvas {
   let sx = sub_x_of(res)
   let sy = sub_y_of(res)
   let n = cols * rows
@@ -62,8 +72,17 @@ fn new(cols: I64, rows: I64, res: I64) -> Canvas {
 
 fn for_caps(c: cp.Caps, cols: I64, rows: I64) -> Canvas = new(cols, rows, resolution_for(c))
 
-fn sub_x_of(res: I64) -> I64 = if res == RES_BRAILLE { 2 } else if res == RES_BLOCK { 2 } else { 1 }
-fn sub_y_of(res: I64) -> I64 = if res == RES_BRAILLE { 4 } else if res == RES_BLOCK { 2 } else { 1 }
+fn sub_x_of(res: Resolution) -> I64 = match res {
+  Resolution.Braille => 2,
+  Resolution.Block => 2,
+  Resolution.Ascii => 1,
+}
+
+fn sub_y_of(res: Resolution) -> I64 = match res {
+  Resolution.Braille => 4,
+  Resolution.Block => 2,
+  Resolution.Ascii => 1,
+}
 
 fn width_dots(cv: Canvas) -> I64 = cv.cols * cv.sub_x
 fn height_dots(cv: Canvas) -> I64 = cv.rows * cv.sub_y
@@ -153,11 +172,13 @@ fn row_owners(cv: Canvas, row: I64) -> Arr[I64] {
   out
 }
 
-fn glyph(res: I64, mask: I64) -> Str {
+fn glyph(res: Resolution, mask: I64) -> Str {
   if mask == 0 { return " " }
-  if res == RES_BRAILLE { return braille(mask) }
-  if res == RES_BLOCK { return quadrant(mask) }
-  "*"
+  match res {
+    Resolution.Braille => braille(mask),
+    Resolution.Block => quadrant(mask),
+    Resolution.Ascii => "*",
+  }
 }
 
 # U+2800 plus the dot mask, encoded as UTF-8 by hand. The block is
@@ -173,10 +194,10 @@ fn braille_bit(cx: I64, cy: I64) -> I64 {
   if cx == 0 { cy } else { 3 + cy }
 }
 
-fn bit_index(res: I64, cx: I64, cy: I64) -> I64 {
-  if res == RES_BRAILLE { return braille_bit(cx, cy) }
-  if res == RES_BLOCK { return cy * 2 + cx }
-  0
+fn bit_index(res: Resolution, cx: I64, cy: I64) -> I64 = match res {
+  Resolution.Braille => braille_bit(cx, cy),
+  Resolution.Block => cy * 2 + cx,
+  Resolution.Ascii => 0,
 }
 
 let QUADRANTS: Arr[Str] = [

@@ -129,8 +129,10 @@ fn py(a: sc.Axis, v: F64, b: Box) -> I64 {
 }
 
 fn draw_series(s: ch.Series, xa: sc.Axis, ya: sc.Axis, b: Box, id: I64) -> Str {
-  if s.mark == ch.MARK_DOT { return dots(s, xa, ya, b, id) }
-  polyline(s, xa, ya, b, id)
+  match s.mark {
+    Mark.Dot => dots(s, xa, ya, b, id),
+    Mark.Line => polyline(s, xa, ya, b, id),
+  }
 }
 
 # One `path` per unbroken run. A single path with a move-to at each gap would be
