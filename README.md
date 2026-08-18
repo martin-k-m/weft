@@ -12,29 +12,27 @@
 <p align="center">
   <img alt="weft" src="https://img.shields.io/badge/weft-v0.1.0-7FE3C4?style=flat-square&labelColor=12332C">
   <img alt="written in twill" src="https://img.shields.io/badge/written%20in-twill-A8DCCB?style=flat-square&labelColor=12332C">
-  <img alt="status: does not run" src="https://img.shields.io/badge/status-does%20not%20run%20yet-D2F0E4?style=flat-square&labelColor=12332C">
+  <img alt="status: tests passing" src="https://img.shields.io/badge/tests-passing-D2F0E4?style=flat-square&labelColor=12332C">
   <img alt="MIT" src="https://img.shields.io/badge/license-MIT-4FB79B?style=flat-square&labelColor=12332C">
 </p>
 
 ---
 
-## Read this first
+## It runs
 
-**weft does not run yet.**
+`weft` is written in twill, in `.tw` files, using `mode systems`. That subset
+did not exist when this library was written, so for a long time none of the code
+here executed and this section said so. twill 1.6 is the release that closed it:
+the 6 test suites under `tests/` pass, and CI runs them against a released
+twill on every push rather than gating on the prose in this file.
 
-weft is written in twill, in `.tw` files, using `mode systems`, the systems
-subset described in `docs/self-hosting.md` in the twill repository. That subset
-is still landing. Until it does, none of the code here executes: there is
-nothing to install, nothing to import, and no plot you can draw today.
+```bash
+twill test tests
+```
 
-This repository is the library written out in full, ahead of the language that
-runs it. Writing a real library against the subset is how you find out what the
-subset is missing, and what it is missing is in
-[`docs/needs.md`](docs/needs.md), one entry per feature, naming the file and the
-function that needs it. That list is the useful output of this repository today.
-
-Nothing below describes behaviour weft has. It describes behaviour weft is
-written to have.
+You need twill 1.6.0-rc1 or newer. `docs/needs.md` is still worth reading -- it
+is the list of what this library asked the language for, and it now records
+which of those arrived and which are still open.
 
 ## The plot it exists for
 
