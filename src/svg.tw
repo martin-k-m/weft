@@ -31,8 +31,12 @@ let TEAL: Str = "#4FB79B"
 let DEEP: Str = "#12332C"
 
 fn series_colour(i: I64) -> Str {
-  let k = i % 4
-  if k == 0 { ACCENT } else if k == 1 { PALE } else if k == 2 { TEAL } else { MINT }
+  match i % 4 {
+    0 => ACCENT,
+    1 => PALE,
+    2 => TEAL,
+    _ => MINT,
+  }
 }
 
 struct Box {

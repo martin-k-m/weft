@@ -29,8 +29,12 @@ fn deep() -> col.Rgb = col.rgb(18, 51, 44)       # 12332C
 # lines that cross. Beyond four, colours repeat and the caller is expected to
 # have given up on colour as the distinguisher and reached for a legend.
 fn series_colour(i: I64) -> col.Rgb {
-  let k = i % 4
-  if k == 0 { accent() } else if k == 1 { pale() } else if k == 2 { teal() } else { mint() }
+  match i % 4 {
+    0 => accent(),
+    1 => pale(),
+    2 => teal(),
+    _ => mint(),
+  }
 }
 
 # Axes, ticks, the frame. Teal is the ribbon's shaded face and reads as
