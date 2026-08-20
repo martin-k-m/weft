@@ -41,4 +41,6 @@ fn main() {
 # autoscaler oscillate, which is the behaviour worth demonstrating.
 fn train_one_step(step: I64) -> F64 = 0.06 + 4.5 / (1.0 + f64(step) * 0.09)
 
-main()
+# No `main()` call here on purpose. `twill run` executes a systems-mode file's
+# top level and THEN calls `main()` itself, which it has done since twill 1.6.1,
+# so a file that also calls it runs the whole program twice.
