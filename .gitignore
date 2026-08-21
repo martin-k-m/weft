@@ -2,3 +2,7 @@
 # source in this repository, which is what spool.lock exists to avoid.
 twill_modules/
 *.svg.tmp
+
+# `twill run examples/loss.tw` writes this next to the example. It is output,
+# not source, and CI fails on any non-.tw file under examples/.
+examples/loss.svg
