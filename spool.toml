@@ -2,10 +2,14 @@ name = "weft"
 version = "0.1.0"
 entry = "src/chart.tw"
 
-# twill is a dependency rather than a toolchain assumption because weft imports
-# twill's own `src/term/` modules by path. They are not part of the standard
-# library, so `import "std/..."` cannot reach them and the repository has to be
-# vendored to be importable at all. See the note in README.md and the entry in
-# docs/needs.md.
+# twill used to be listed here because weft imported twill's own `src/term/`
+# modules by file path, out of the vendored copy. It does not any more: those
+# modules are `std/term/...` as of twill 1.7 and are compiled into the binary,
+# and a working checkout has no `twill_modules/` in it.
+#
+# The entry stays because the floor is real. `src/theme.tw` and `src/svg.tw`
+# match on integer literals, which 1.6.7 cannot parse, so `^1.7.0` is the
+# minimum this code actually compiles under rather than the newest release at
+# the time of writing. See the note in README.md and docs/needs.md.
 [dependencies]
-twill = { version = "^1.5.0", git = "https://github.com/twill-lang/twill" }
+twill = { version = "^1.7.0", git = "https://github.com/twill-lang/twill" }

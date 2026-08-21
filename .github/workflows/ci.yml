@@ -1,8 +1,9 @@
 name: CI
 
-# Nothing here runs twill, because twill cannot run this code yet. What is left
-# is still worth gating on: the things that would quietly rot while the language
-# catches up. Every check below is one that has a right answer today.
+# Two jobs. `tests` runs a released twill over every file, the suites and the
+# examples, which is the gate that matters. `check` is the set of things a
+# compiler has no opinion about and that would otherwise quietly rot: the source
+# staying twill, the old name staying gone, the palette staying twill's.
 
 on:
   push:
@@ -52,11 +53,12 @@ jobs:
             exit 1
           fi
 
-      - name: Every test file is wired into the suite
+      - name: Every test file reports
         run: |
-          # There is no test runner, so a test file is a program and CI cannot
-          # discover it. The next best thing is to check that each one ends by
-          # reporting, which is what makes it exit non-zero on a failure.
+          # `twill test` discovers the files, so this is no longer about
+          # discovery. A test file is still a program, and one that never calls
+          # `report` exits 0 whatever its cases did. This check is what stops a
+          # suite passing by saying nothing.
           for f in tests/*_test.tw; do
             tail -n 1 "$f" | grep -q "t.report(" || { echo "$f does not end in t.report"; exit 1; }
           done
@@ -82,10 +84,10 @@ jobs:
       # would have. Pinned rather than floating: a green run should mean this
       # code passed against a known compiler, not against whatever was newest
       # that morning.
-      - name: Install twill v1.7.0
+      - name: Install twill v1.7.1
         run: |
           curl -fsSL -o twill \
-            https://github.com/twill-lang/twill/releases/download/v1.7.0/twill-v1.7.0-linux-amd64
+            https://github.com/twill-lang/twill/releases/download/v1.7.1/twill-v1.7.1-linux-amd64
           chmod +x twill
           ./twill --version
 
